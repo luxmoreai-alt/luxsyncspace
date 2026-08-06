@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, Building2, CalendarDays, Download, Mail, MapPin, Pencil, Phone, Save, Search, Send, ShieldCheck, Smartphone, UserRound, Users, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, Mail, MapPin, Pencil, Phone, Save, Search, Send, ShieldCheck, Smartphone, UserRound, Users, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -19,7 +19,7 @@ const emptyInvite = () => ({
   bio: ""
 });
 
-export function Settings({ user, people, onToast, onRefresh }) {
+export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onStartTutorial }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -28,6 +28,7 @@ export function Settings({ user, people, onToast, onRefresh }) {
   const [busy, setBusy] = useState(false);
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled);
   const [installAvailable, setInstallAvailable] = useState(Boolean(window.__luxsyncspaceInstallPrompt));
+  const [privacy, setPrivacy] = useState({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
   const isInstalled = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const filtered = people.filter((person) => `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
@@ -37,6 +38,23 @@ export function Settings({ user, people, onToast, onRefresh }) {
     window.addEventListener("luxsyncspace:install-available", available);
     return () => window.removeEventListener("luxsyncspace:install-available", available);
   }, []);
+
+  useEffect(() => {
+    setPrivacy({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
+  }, [user.display_name, user.hide_full_name, user.hide_email]);
+
+  async function savePrivacy(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const result = await api("/profile/privacy", { method: "PATCH", body: JSON.stringify(privacy) });
+      onUserUpdate?.(result.user);
+      await onRefresh();
+      window.dispatchEvent(new CustomEvent("luxsyncspace:self-updated", { detail: result.user }));
+      onToast(result.message);
+    } catch (error) { onToast(error.message); }
+    finally { setBusy(false); }
+  }
 
   async function turnOnNotifications() {
     try {
@@ -125,7 +143,15 @@ export function Settings({ user, people, onToast, onRefresh }) {
           <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}><Smartphone size={18} /> App & notifications</button>
         </aside>
         <section className="settings-content panel">
-          {tab === "profile" && <ProfileDetails person={user} heading="My employee profile" />}
+          {tab === "profile" && <><ProfileDetails person={user} heading="My employee profile" />
+            <form className="privacy-settings" onSubmit={savePrivacy}>
+              <header><div><ShieldCheck size={19} /></div><span><h3>Directory privacy</h3><p>Control the identity coworkers see. HR and senior administrators can still view official account details.</p></span></header>
+              <label className="privacy-toggle"><span><b>Use a display name</b><small>Hide your full legal name from the employee directory and show the name below instead.</small></span><input type="checkbox" checked={privacy.hideFullName} onChange={(event) => setPrivacy({ ...privacy, hideFullName: event.target.checked })} /></label>
+              {privacy.hideFullName && <label className="privacy-display-name"><span>Display name shown to coworkers</span><input value={privacy.displayName} onChange={(event) => setPrivacy({ ...privacy, displayName: event.target.value })} placeholder="e.g. Abi R" minLength={2} maxLength={80} required /></label>}
+              <label className="privacy-toggle"><span><b>Hide my work email</b><small>Coworkers will not see your email in People or search results.</small></span><input type="checkbox" checked={privacy.hideEmail} onChange={(event) => setPrivacy({ ...privacy, hideEmail: event.target.checked })} /></label>
+              <button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save privacy settings"}</button>
+            </form>
+          </>}
           {tab === "employees" && <>
             <header className="settings-section-head"><div><h2>Employee profiles</h2><p>View company identity, designation, team, and contact details.</p></div></header>
             <label className="section-search settings-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by employee ID, name, or designation" /></label>
@@ -168,6 +194,11 @@ export function Settings({ user, people, onToast, onRefresh }) {
                   <button className="button button-secondary" onClick={() => { playNotificationSound("meeting"); onToast("Playing meeting reminder sound"); }}>Test meeting</button>
                 </div>
               </section>
+              <section>
+                <span className="app-setting-icon"><BookOpen size={21} /></span>
+                <div><h3>App tutorial</h3><p>Replay the guided tour for chat, notifications, calendar scheduling, and meetings.</p></div>
+                <button className="button button-secondary" onClick={onStartTutorial}>Start tutorial</button>
+              </section>
             </div>
           </>}
         </section>
@@ -193,7 +224,7 @@ function ProfileDetails({ person, heading }) {
     [Badge, "Employee ID", person.employee_id || "Pending"],
     [Building2, "Department", person.department],
     [ShieldCheck, "Workspace role", person.role?.replace("_", " ")],
-    [Mail, "Work email", person.email],
+    [Mail, "Work email", person.email || "Hidden by employee"],
     [Phone, "Phone", person.phone || "Not provided"],
     [MapPin, "Location", person.location || "Not provided"],
     [UserRound, "Manager", person.manager_name || "Not assigned"],

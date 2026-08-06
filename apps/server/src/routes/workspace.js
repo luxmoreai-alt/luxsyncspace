@@ -85,9 +85,13 @@ workspaceRouter.get("/attachments/:id", async (req, res, next) => {
 workspaceRouter.get("/bootstrap", async (req, res, next) => {
   try {
     const { userId, organizationId } = req.auth;
+    const viewerRole = await currentRole(userId);
     const [people, channels, events, announcements, channelUnreadRows, directUnreadRows] = await Promise.all([
       cached(`people:${organizationId}`, 30_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
-             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status, m.full_name AS manager_name
+             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status,
+             u.employment_status, u.offboarded_at, u.deleted_at, u.display_name, u.hide_full_name,
+             u.hide_email, u.onboarding_completed_at,
+             CASE WHEN m.hide_full_name THEN COALESCE(NULLIF(m.display_name, ''), 'Team member') ELSE m.full_name END AS manager_name
           FROM users u LEFT JOIN users m ON m.id = u.manager_id
           WHERE u.organization_id = ${organizationId} ORDER BY u.full_name`),
       cached(`channel-memberships:${organizationId}`, 10_000, () => sql`
@@ -102,8 +106,9 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           WHERE c.organization_id = ${organizationId}
           ORDER BY c.name
         `).then((memberships) => memberships.filter((membership) => membership.user_id === userId)),
-      cached(`events:${organizationId}`, 15_000, () => sql`SELECT e.*, u.full_name AS organizer_name,
-             COALESCE(json_agg(json_build_object('id', a.id, 'name', a.full_name, 'initials', a.initials, 'color', a.avatar_color))
+      cached(`events:${organizationId}`, 15_000, () => sql`SELECT e.*,
+             CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS organizer_name,
+             COALESCE(json_agg(json_build_object('id', a.id, 'name', CASE WHEN a.hide_full_name THEN COALESCE(NULLIF(a.display_name, ''), 'Team member') ELSE a.full_name END, 'initials', a.initials, 'color', a.avatar_color))
                FILTER (WHERE a.id IS NOT NULL), '[]') AS attendees
           FROM events e
           JOIN users u ON u.id = e.organizer_id
@@ -115,7 +120,8 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           GROUP BY e.id, u.full_name ORDER BY e.starts_at`)
       ,
       cached(`announcements:${organizationId}`, 30_000, () => sql`SELECT a.id, a.title, a.body, a.priority, a.published_at,
-             u.full_name AS author_name, u.initials AS author_initials, u.avatar_color AS author_color
+             CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS author_name,
+             u.initials AS author_initials, u.avatar_color AS author_color
           FROM announcements a JOIN users u ON u.id = a.author_id
           WHERE a.organization_id = ${organizationId}
           ORDER BY a.published_at DESC LIMIT 20`),
@@ -133,8 +139,16 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           GROUP BY sender_id`
     ]);
     const channelUnread = new Map(channelUnreadRows.map((row) => [row.channel_id, row.unread_count]));
+    const directoryPeople = people
+      .filter((person) => (person.employment_status || "active") === "active")
+      .map((person) => person.id === userId ? person : {
+        ...person,
+        full_name: person.hide_full_name ? (person.display_name || "Team member") : person.full_name,
+        email: person.hide_email ? null : person.email
+      });
     res.json({
-      people,
+      people: directoryPeople,
+      workforce: workforceRoles.has(viewerRole) ? people : undefined,
       channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
       events,
       announcements,
@@ -148,6 +162,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
 const groupRoles = new Set(["hr", "senior_leader", "manager", "team_lead"]);
 const announcementRoles = new Set(["hr", "senior_leader"]);
 const inviteRoles = new Set(["hr", "senior_leader", "manager"]);
+const workforceRoles = new Set(["hr", "senior_leader"]);
 
 workspaceRouter.patch("/presence", async (req, res, next) => {
   try {
@@ -163,6 +178,36 @@ workspaceRouter.patch("/presence", async (req, res, next) => {
     invalidateCache(`people:${req.auth.organizationId}`);
     req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("presence:updated", updated);
     res.json(updated);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.patch("/profile/privacy", async (req, res, next) => {
+  try {
+    const input = z.object({
+      displayName: z.string().trim().max(80).default(""),
+      hideFullName: z.boolean().default(false),
+      hideEmail: z.boolean().default(false)
+    }).refine((value) => !value.hideFullName || value.displayName.length >= 2, { message: "Add a display name before hiding your full name" }).parse(req.body);
+    const [user] = await sql`
+      UPDATE users
+      SET display_name = ${input.displayName || null}, hide_full_name = ${input.hideFullName}, hide_email = ${input.hideEmail}
+      WHERE id = ${req.auth.userId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id, display_name, hide_full_name, hide_email
+    `;
+    invalidateCache(`people:${req.auth.organizationId}`);
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("profile:privacy-updated", { id: user.id });
+    res.json({ user, message: "Directory privacy updated" });
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/onboarding/complete", async (req, res, next) => {
+  try {
+    const [user] = await sql`
+      UPDATE users SET onboarding_completed_at = NOW()
+      WHERE id = ${req.auth.userId}
+      RETURNING id, onboarding_completed_at
+    `;
+    res.json(user);
   } catch (error) { next(error); }
 });
 
@@ -291,7 +336,8 @@ workspaceRouter.get("/channels/:id/members", async (req, res, next) => {
     `;
     if (!membership) return res.status(403).json({ error: "You are not a member of this group" });
     const members = await sql`
-      SELECT u.id, u.employee_id, u.full_name, u.title, u.department, u.initials, u.avatar_color, u.presence
+      SELECT u.id, u.employee_id, CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS full_name,
+             u.title, u.department, u.initials, u.avatar_color, u.presence
       FROM channel_members cm JOIN users u ON u.id = cm.user_id
       WHERE cm.channel_id = ${req.params.id}
       ORDER BY u.full_name
@@ -334,7 +380,8 @@ workspaceRouter.put("/channels/:id/members", async (req, res, next) => {
     }
     invalidateCache("channel-memberships:", "socket-memberships:");
     const members = await sql`
-      SELECT u.id, u.employee_id, u.full_name, u.title, u.department, u.initials, u.avatar_color, u.presence
+      SELECT u.id, u.employee_id, CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS full_name,
+             u.title, u.department, u.initials, u.avatar_color, u.presence
       FROM channel_members cm JOIN users u ON u.id = cm.user_id
       WHERE cm.channel_id = ${req.params.id} ORDER BY u.full_name
     `;
@@ -456,12 +503,13 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
     const [employee] = await sql`
       INSERT INTO users (
         organization_id, employee_id, email, password_hash, full_name, title, department, role,
-        initials, avatar_color, presence, phone, location, bio, manager_id, joined_at, must_change_password
+        initials, avatar_color, presence, phone, location, bio, manager_id, joined_at, must_change_password,
+        onboarding_completed_at
       )
       VALUES (
         ${req.auth.organizationId}, ${employeeId}, ${input.email}, ${passwordHash}, ${input.fullName},
         ${input.title}, ${input.department}, ${input.role}, ${initials}, '#3768D8', 'offline',
-        ${input.phone}, ${input.location}, ${input.bio}, ${input.managerId || null}, ${input.joinedAt}, TRUE
+        ${input.phone}, ${input.location}, ${input.bio}, ${input.managerId || null}, ${input.joinedAt}, TRUE, NULL
       )
       RETURNING id, employee_id, email, full_name, title, department, role, phone, location, bio, manager_id, joined_at
     `;
@@ -558,15 +606,59 @@ workspaceRouter.patch("/employees/:id", async (req, res, next) => {
   }
 });
 
+workspaceRouter.patch("/employees/:id/employment", async (req, res, next) => {
+  try {
+    const role = await currentRole(req.auth.userId);
+    if (!workforceRoles.has(role)) return res.status(403).json({ error: "Only HR and senior administrators can manage employment status" });
+    const employeeId = z.string().uuid().parse(req.params.id);
+    const { status } = z.object({ status: z.enum(["active", "offboarded", "deleted"]) }).parse(req.body);
+    if (employeeId === req.auth.userId) return res.status(400).json({ error: "You cannot change your own employment status" });
+    const [target] = await sql`
+      SELECT id, role, employment_status FROM users
+      WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
+    `;
+    if (!target) return res.status(404).json({ error: "Employee not found" });
+    if (target.role === "senior_leader" && role !== "senior_leader") {
+      return res.status(403).json({ error: "Only a senior administrator can manage this account" });
+    }
+    const [employee] = await sql`
+      UPDATE users
+      SET employment_status = ${status},
+          offboarded_at = CASE WHEN ${status} = 'offboarded' THEN NOW() ELSE NULL END,
+          deleted_at = CASE WHEN ${status} = 'deleted' THEN NOW() ELSE NULL END,
+          presence = CASE WHEN ${status} = 'active' THEN presence ELSE 'offline' END,
+          availability_status = CASE WHEN ${status} = 'active' THEN availability_status ELSE 'offline' END
+      WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id, employee_id, email, full_name, title, department, role, initials, avatar_color,
+                presence, availability_status, employment_status, offboarded_at, deleted_at
+    `;
+    if (status === "active") {
+      await sql`
+        INSERT INTO channel_members (channel_id, user_id)
+        SELECT id, ${employeeId} FROM channels
+        WHERE organization_id = ${req.auth.organizationId} AND is_private = FALSE
+        ON CONFLICT DO NOTHING
+      `;
+    } else {
+      req.app.get("io")?.in(`user:${employeeId}`).disconnectSockets(true);
+    }
+    invalidateCache(`people:${req.auth.organizationId}`, "socket-memberships:");
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("employee:status-updated", employee);
+    const action = status === "active" ? "reactivated" : status === "offboarded" ? "offboarded" : "deleted";
+    res.json({ employee, message: `${employee.full_name} has been ${action}` });
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
   try {
     const receipt = await markChannelRead(req, req.params.id);
     if (!receipt) return res.status(403).json({ error: "You are not a member of this channel" });
     const messages = await sql`
-      SELECT cm.id, cm.body, cm.sent_at, u.id AS sender_id, u.full_name AS sender_name,
+      SELECT cm.id, cm.body, cm.sent_at, u.id AS sender_id,
+             CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS sender_name,
              u.initials, u.avatar_color, u.title, a.id AS attachment_id, a.file_name,
              a.mime_type, a.file_size, cm.deleted_at, cm.reply_to_id, cm.forwarded_from_id,
-             reply.body AS reply_body, reply_user.full_name AS reply_sender_name,
+             reply.body AS reply_body, CASE WHEN reply_user.hide_full_name THEN COALESCE(NULLIF(reply_user.display_name, ''), 'Team member') ELSE reply_user.full_name END AS reply_sender_name,
              reply.deleted_at AS reply_deleted_at,
              COALESCE((
                SELECT json_agg(json_build_object(
@@ -647,7 +739,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
     const [attachment] = message.attachment_id ? await sql`
       SELECT file_name, mime_type, file_size FROM message_attachments WHERE id = ${message.attachment_id}
     ` : [null];
-    const [sender] = await sql`SELECT id AS sender_id, full_name AS sender_name, initials, avatar_color, title FROM users WHERE id = ${req.auth.userId}`;
+    const [sender] = await sql`SELECT id AS sender_id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS sender_name, initials, avatar_color, title FROM users WHERE id = ${req.auth.userId}`;
     const [unreadMember] = await sql`
       SELECT 1 FROM channel_members
       WHERE channel_id = ${req.params.id}
@@ -657,7 +749,7 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
     `;
     const [reply] = message.reply_to_id ? await sql`
       SELECT original.body AS reply_body, original.deleted_at AS reply_deleted_at,
-             author.full_name AS reply_sender_name
+             CASE WHEN author.hide_full_name THEN COALESCE(NULLIF(author.display_name, ''), 'Team member') ELSE author.full_name END AS reply_sender_name
       FROM channel_messages original
       JOIN users author ON author.id = original.sender_id
       WHERE original.id = ${message.reply_to_id}
@@ -789,7 +881,9 @@ workspaceRouter.get("/direct/:userId", async (req, res, next) => {
         AND read_at IS NULL
     `;
     const messages = await sql`
-      SELECT dm.id, dm.body, dm.sent_at, u.id AS sender_id, u.full_name AS sender_name, u.initials, u.avatar_color,
+      SELECT dm.id, dm.body, dm.sent_at, u.id AS sender_id,
+             CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS sender_name,
+             u.initials, u.avatar_color,
              a.id AS attachment_id, a.file_name, a.mime_type, a.file_size
       FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
       LEFT JOIN message_attachments a ON a.id = dm.attachment_id
@@ -837,7 +931,7 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
     const [attachment] = message.attachment_id ? await sql`
       SELECT file_name, mime_type, file_size FROM message_attachments WHERE id = ${message.attachment_id}
     ` : [null];
-    const [sender] = await sql`SELECT id AS sender_id, full_name AS sender_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
+    const [sender] = await sql`SELECT id AS sender_id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS sender_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
     const result = { ...message, ...sender, ...attachment };
     req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
     sendPushToUser(req.params.userId, {
@@ -1124,8 +1218,15 @@ workspaceRouter.get("/search", async (req, res, next) => {
   try {
     const q = `%${String(req.query.q || "").slice(0, 80)}%`;
     const [people, channels] = await Promise.all([
-      sql`SELECT id, full_name, email, title, initials, avatar_color, presence FROM users
-          WHERE organization_id = ${req.auth.organizationId} AND (full_name ILIKE ${q} OR email ILIKE ${q} OR title ILIKE ${q}) LIMIT 8`,
+      sql`SELECT id,
+                 CASE WHEN hide_full_name AND id <> ${req.auth.userId} THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS full_name,
+                 CASE WHEN hide_email AND id <> ${req.auth.userId} THEN NULL ELSE email END AS email,
+                 title, initials, avatar_color, presence, availability_status
+          FROM users
+          WHERE organization_id = ${req.auth.organizationId} AND employment_status = 'active'
+            AND ((NOT hide_full_name AND full_name ILIKE ${q}) OR display_name ILIKE ${q}
+              OR (NOT hide_email AND email ILIKE ${q}) OR title ILIKE ${q})
+          LIMIT 8`,
       sql`SELECT id, name, description FROM channels
           WHERE organization_id = ${req.auth.organizationId} AND (name ILIKE ${q} OR description ILIKE ${q}) LIMIT 8`
     ]);

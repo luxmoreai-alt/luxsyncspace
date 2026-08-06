@@ -14,7 +14,7 @@ const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.doc
 
 export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
-  const [selectedPerson, setSelectedPerson] = useState(null);
+  const [selectedPerson, setSelectedPerson] = useState(() => people.find((person) => person.id === new URLSearchParams(window.location.search).get("direct")) || null);
   const [messages, setMessages] = useState([]);
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
@@ -42,6 +42,37 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const selectedChannelRef = useRef(null);
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
+
+  function openChannel(channelId) {
+    setSelected(channelId);
+    setSelectedPerson(null);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "chat");
+    url.searchParams.set("channel", channelId);
+    url.searchParams.delete("direct");
+    window.history.pushState({ luxsyncspace: true, view: "chat", conversation: "channel" }, "", url);
+  }
+
+  function openPerson(person) {
+    setSelected(null);
+    setSelectedPerson(person);
+    const url = new URL(window.location.href);
+    url.searchParams.set("view", "chat");
+    url.searchParams.set("direct", person.id);
+    url.searchParams.delete("channel");
+    window.history.pushState({ luxsyncspace: true, view: "chat", conversation: "direct" }, "", url);
+  }
+
+  function closeConversation(useHistory = true) {
+    const params = new URLSearchParams(window.location.search);
+    if (useHistory && (params.has("channel") || params.has("direct"))) return window.history.back();
+    setSelected(null);
+    setSelectedPerson(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("channel");
+    url.searchParams.delete("direct");
+    window.history.replaceState({ luxsyncspace: true, view: "chat" }, "", url);
+  }
   const filteredPeople = useMemo(() => people.filter((person) =>
     `${person.full_name} ${person.title} ${person.department} ${person.employee_id}`.toLowerCase().includes(query.toLowerCase())
   ), [people, query]);
@@ -127,6 +158,18 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
 
   useEffect(() => { selectedPersonRef.current = selectedPerson; }, [selectedPerson]);
   useEffect(() => { selectedChannelRef.current = selected; }, [selected]);
+
+  useEffect(() => {
+    const syncConversation = () => {
+      const params = new URLSearchParams(window.location.search);
+      const channelId = params.get("channel");
+      const personId = params.get("direct");
+      setSelected(channels.some((channel) => channel.id === channelId) ? channelId : null);
+      setSelectedPerson(people.find((person) => person.id === personId) || null);
+    };
+    window.addEventListener("popstate", syncConversation);
+    return () => window.removeEventListener("popstate", syncConversation);
+  }, [channels, people]);
 
   useEffect(() => {
     const markReadWhenVisible = () => {
@@ -318,8 +361,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       const channel = await api("/channels", { method: "POST", body: JSON.stringify(group) });
       await onRefresh();
       setCreateGroup(false);
-      setSelected(channel.id);
-      setSelectedPerson(null);
+      openChannel(channel.id);
       onToast("Group created successfully");
     } catch (error) { onToast(error.message); }
   }
@@ -373,7 +415,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     try {
       const result = await api(`/channels/${selected}`, { method: "DELETE" });
       setDeleteGroupOpen(false);
-      setSelected(null);
+      closeConversation(false);
       setChannelMembers([]);
       await onRefresh();
       onToast(result.message);
@@ -385,23 +427,25 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       <aside className="chat-sidebar">
         <header><div><h1>Chat</h1><p>{people.length} employees connected</p></div>{canCreateGroup && <button className="icon-button" onClick={() => setCreateGroup(true)} title="Create group"><Plus size={20} /></button>}</header>
         <label className="section-search"><Search size={16} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Find an employee" /></label>
-        <nav className="chat-nav">
-          <button className={!selected && !selectedPerson ? "active" : ""} onClick={() => { setSelected(null); setSelectedPerson(null); }}><Users size={18} /> All employees <b>{people.length}</b></button>
-        </nav>
-        <div className="channel-heading"><span>GROUPS & CHANNELS</span>{canCreateGroup && <button onClick={() => setCreateGroup(true)}><Plus size={15} /></button>}</div>
-        <nav className="channels">
-          {channels.map((channel) => <button key={channel.id} onClick={() => { setSelected(channel.id); setSelectedPerson(null); }} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span><UnreadBadge count={channel.unread_count} /></button>)}
-        </nav>
-        <div className="channel-heading"><span>EMPLOYEES</span></div>
-        <nav className="direct-list">
-          {filteredPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
-            <button className="direct-person-open" onClick={() => { setSelected(null); setSelectedPerson(person); }}><Avatar person={person} size="xs" showPresence /><span className="direct-person-name">{person.full_name}</span><UnreadBadge count={directUnreadCounts[person.id]} /></button>
-            <span className="direct-call-actions">
-              <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={15} /></button>
-              <button type="button" onClick={() => onStartCall(person, "video")} title={`Video call ${person.full_name}`} aria-label={`Video call ${person.full_name}`}><Video size={15} /></button>
-            </span>
-          </div>)}
-        </nav>
+        <div className="chat-sidebar-scroll">
+          <nav className="chat-nav">
+            <button className={!selected && !selectedPerson ? "active" : ""} onClick={() => closeConversation()}><Users size={18} /> All employees <b>{people.length}</b></button>
+          </nav>
+          <div className="channel-heading"><span>GROUPS & CHANNELS</span>{canCreateGroup && <button onClick={() => setCreateGroup(true)}><Plus size={15} /></button>}</div>
+          <nav className="channels">
+            {channels.map((channel) => <button key={channel.id} onClick={() => openChannel(channel.id)} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span><UnreadBadge count={channel.unread_count} /></button>)}
+          </nav>
+          <div className="channel-heading"><span>EMPLOYEES</span></div>
+          <nav className="direct-list">
+            {filteredPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
+              <button className="direct-person-open" onClick={() => openPerson(person)}><Avatar person={person} size="xs" showPresence /><span className="direct-person-name">{person.full_name}</span><UnreadBadge count={directUnreadCounts[person.id]} /></button>
+              <span className="direct-call-actions">
+                <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={15} /></button>
+                <button type="button" onClick={() => onStartCall(person, "video")} title={`Video call ${person.full_name}`} aria-label={`Video call ${person.full_name}`}><Video size={15} /></button>
+              </span>
+            </div>)}
+          </nav>
+        </div>
       </aside>
 
       {!selected && !selectedPerson ? (
@@ -412,7 +456,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               {canCreateGroup && <button className="icon-button" onClick={() => setCreateGroup(true)} title="Create group" aria-label="Create group"><Plus size={20} /></button>}
             </header>
             <nav>
-              {channels.map((channel) => <button key={channel.id} onClick={() => { setSelected(channel.id); setSelectedPerson(null); }}>
+              {channels.map((channel) => <button key={channel.id} onClick={() => openChannel(channel.id)}>
                 <span className="mobile-channel-icon">{channel.is_private ? <Lock size={18} /> : <Hash size={20} />}</span>
                 <span><b>{channel.name}</b><small>{channel.description || (channel.is_private ? "Private channel" : "Channel")}</small></span>
                 <span className="mobile-channel-tail"><UnreadBadge count={channel.unread_count} /><ChevronRight size={18} /></span>
@@ -426,9 +470,9 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
               <Avatar person={person} size="lg" showPresence />
               <div><h3>{person.full_name}<UnreadBadge count={directUnreadCounts[person.id]} /></h3><p><BriefcaseBusiness size={13} /> {person.title}</p><p><MapPin size={13} /> {person.location || person.department}</p><span>{person.employee_id} · {person.department}</span></div>
               {person.id !== user.id && <div className="employee-chat-actions">
-                <button className="button button-secondary employee-message-button" onClick={() => setSelectedPerson(person)}><MessageSquareText size={16} /> Message</button>
+                <button className="button button-secondary employee-message-button" onClick={() => openPerson(person)}><MessageSquareText size={16} /> Message</button>
                 <div className="mobile-employee-call-actions">
-                  <button type="button" onClick={() => setSelectedPerson(person)} title={`Message ${person.full_name}`} aria-label={`Message ${person.full_name}`}><MessageSquareText size={19} /></button>
+                  <button type="button" onClick={() => openPerson(person)} title={`Message ${person.full_name}`} aria-label={`Message ${person.full_name}`}><MessageSquareText size={19} /></button>
                   <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={19} /></button>
                   <button type="button" onClick={() => onStartCall(person, "video")} title={`Video call ${person.full_name}`} aria-label={`Video call ${person.full_name}`}><Video size={19} /></button>
                 </div>
@@ -439,7 +483,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       ) : (
         <section className={`conversation ${selectedPerson ? "direct-conversation" : ""}`}>
           <header className="conversation-header">
-            <div><button className="mobile-conversation-back" onClick={() => { setSelected(null); setSelectedPerson(null); }} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p></span></div>
+            <div><button className="mobile-conversation-back" onClick={() => closeConversation()} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p></span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
               {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}

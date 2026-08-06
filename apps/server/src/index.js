@@ -58,9 +58,11 @@ app.get("/api/health", (_req, res) => res.json({
 app.use("/api/auth", authRouter);
 app.use("/api", workspaceRouter);
 
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
     socket.auth = jwt.verify(socket.handshake.auth.token, config.jwtSecret);
+    const [account] = await sql`SELECT employment_status FROM users WHERE id = ${socket.auth.userId}`;
+    if (!account || (account.employment_status || "active") !== "active") return next(new Error("account_inactive"));
     next();
   } catch {
     next(new Error("unauthorized"));
@@ -100,7 +102,8 @@ io.on("connection", (socket) => {
       `;
       if (!meeting) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
       const [profile] = await sql`
-        SELECT id, full_name, title, initials, avatar_color FROM users WHERE id = ${socket.auth.userId}
+        SELECT id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS full_name,
+               title, initials, avatar_color FROM users WHERE id = ${socket.auth.userId}
       `;
       if (socket.meetingRoom) {
         socket.leave(socket.meetingRoom);

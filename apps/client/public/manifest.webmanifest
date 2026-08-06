@@ -1,6 +1,7 @@
 {
   "name": "LuxSyncspace",
   "short_name": "LuxSyncspace",
+  "id": "/",
   "description": "Secure internal communication for Luxmor AI",
   "start_url": "/",
   "scope": "/",
@@ -30,4 +31,3 @@
     }
   ]
 }
-

@@ -18,11 +18,15 @@ import { IncomingCall } from "./components/IncomingCall";
 import { InAppNotification } from "./components/InAppNotification";
 import { NotificationSetupPrompt } from "./components/NotificationSetupPrompt";
 import { dismissIncomingCallNotification } from "./lib/notifications";
+import { OnboardingTutorial } from "./components/OnboardingTutorial";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [data, setData] = useState({ people: [], channels: [], events: [], announcements: [], directUnreadCounts: {} });
-  const [active, setActive] = useState(() => new URLSearchParams(window.location.search).get("channel") ? "chat" : "home");
+  const [active, setActive] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("channel") || params.get("direct") ? "chat" : params.get("view") || "home";
+  });
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
   const [activeMeeting, setActiveMeeting] = useState(null);
   const [loading, setLoading] = useState(Boolean(authStore.get()));
@@ -31,11 +35,39 @@ export default function App() {
   const [incomingCall, setIncomingCall] = useState(null);
   const [notification, setNotification] = useState(null);
   const [notifications, setNotifications] = useState([]);
+  const [tutorialOpen, setTutorialOpen] = useState(false);
+
+  const navigate = useCallback((view, { replace = false } = {}) => {
+    const next = view || "home";
+    const url = new URL(window.location.href);
+    url.searchParams.delete("channel");
+    url.searchParams.delete("direct");
+    url.searchParams.delete("meeting");
+    if (next === "home") url.searchParams.delete("view");
+    else url.searchParams.set("view", next);
+    window.history[replace ? "replaceState" : "pushState"]({ luxsyncspace: true, view: next }, "", url);
+    setActive(next);
+  }, []);
+
+  useEffect(() => {
+    window.history.replaceState({ ...(window.history.state || {}), luxsyncspace: true, view: active }, "", window.location.href);
+    const syncFromHistory = () => {
+      const params = new URLSearchParams(window.location.search);
+      const nextMeeting = params.get("meeting");
+      setMeetingId(nextMeeting);
+      if (!nextMeeting) {
+        setActiveMeeting(null);
+        setActive(params.get("channel") || params.get("direct") ? "chat" : params.get("view") || "home");
+      }
+    };
+    window.addEventListener("popstate", syncFromHistory);
+    return () => window.removeEventListener("popstate", syncFromHistory);
+  }, []);
 
   useEffect(() => {
     if (!authStore.get()) return;
     Promise.all([api("/auth/me"), api("/bootstrap")])
-      .then(([me, workspace]) => { setUser(me.user); setData(workspace); })
+      .then(([me, workspace]) => { setUser(me.user); setData(workspace); setTutorialOpen(!me.user.must_change_password && !me.user.onboarding_completed_at); })
       .catch(() => authStore.clear())
       .finally(() => setLoading(false));
   }, []);
@@ -61,13 +93,13 @@ export default function App() {
   function openNotification(item) {
     setNotification(null);
     setNotifications((current) => current.map((entry) => entry.id === item.id ? { ...entry, unread: false } : entry));
-    setActive(item.view || "home");
+    navigate(item.view || "home");
   }
 
   useEffect(() => {
     const handleUnauthorized = () => {
       setUser(null);
-      setActive("home");
+      navigate("home", { replace: true });
       setToast("");
       setLoading(false);
     };
@@ -91,12 +123,13 @@ export default function App() {
     const workspace = await api("/bootstrap");
     setUser(result.user);
     setData(workspace);
+    setTutorialOpen(!result.user.must_change_password && !result.user.onboarding_completed_at);
   }
 
   function logout() {
     authStore.clear();
     setUser(null);
-    setActive("home");
+    navigate("home", { replace: true });
   }
 
   async function saveEvent(event) {
@@ -152,11 +185,16 @@ export default function App() {
     } catch (error) { setToast(error.message); }
   }
 
+  function completeTutorial(completedAt) {
+    setUser((current) => ({ ...current, onboarding_completed_at: completedAt || new Date().toISOString() }));
+    setTutorialOpen(false);
+  }
+
   function joinMeeting(event) {
     const url = new URL(window.location.href);
     url.searchParams.delete("channel");
     url.searchParams.set("meeting", event.id);
-    window.history.pushState({}, "", url);
+    window.history.pushState({ luxsyncspace: true, view: active, meetingId: event.id }, "", url);
     setActiveMeeting(event);
     setMeetingId(event.id);
   }
@@ -164,7 +202,9 @@ export default function App() {
   function leaveMeeting() {
     const url = new URL(window.location.href);
     url.searchParams.delete("meeting");
-    window.history.pushState({}, "", url);
+    url.searchParams.set("view", "meetings");
+    window.history.replaceState({ luxsyncspace: true, view: "meetings" }, "", url);
+    setActive("meetings");
     setMeetingId(null);
     setActiveMeeting(null);
     refreshWorkspace().catch(() => {});
@@ -217,7 +257,7 @@ export default function App() {
 
   if (loading) return <div className="app-loading"><span className="loading-logo">S</span><p>Opening your workspace…</p></div>;
   if (!user) return <Login onLogin={login} />;
-  if (user.must_change_password) return <ChangePassword user={user} onLogout={logout} onChanged={() => { setUser((current) => ({ ...current, must_change_password: false })); setToast("Password updated successfully"); }} />;
+  if (user.must_change_password) return <ChangePassword user={user} onLogout={logout} onChanged={() => { setUser((current) => ({ ...current, must_change_password: false })); setTutorialOpen(true); setToast("Password updated successfully"); }} />;
   if (meetingId) {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <>
@@ -228,23 +268,24 @@ export default function App() {
     </>;
   }
 
-  const pageProps = { user, data, navigate: setActive, onNewEvent: () => setNewEvent(true), onRefresh: refreshWorkspace, onToast: setToast, onJoinMeeting: joinMeeting, onStartMeeting: startInstantMeeting };
+  const pageProps = { user, data, navigate, onNewEvent: () => setNewEvent(true), onRefresh: refreshWorkspace, onToast: setToast, onJoinMeeting: joinMeeting, onStartMeeting: startInstantMeeting };
   return (
     <>
-      <Shell user={user} active={active} setActive={setActive} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
+      <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
         {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={new URLSearchParams(window.location.search).get("channel")} onStartCall={startCall} />}
         {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={() => setNewEvent(true)} onCancelEvent={cancelEvent} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={() => setNewEvent(true)} onJoinMeeting={joinMeeting} />}
-        {active === "people" && <People user={user} people={data.people} onStartChat={() => setActive("chat")} onInvite={() => setActive("settings")} />}
-        {active === "settings" && <Settings user={user} people={data.people} onToast={setToast} onRefresh={refreshWorkspace} />}
+        {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={() => navigate("chat")} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
+        {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
       <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={receiveNotification} onChatMessage={receiveChatMessage} onPresenceUpdate={updatePresence} />
       <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onOpen={() => openNotification(notification)} onClose={() => setNotification(null)} />
-      <NotificationSetupPrompt onToast={setToast} />
+      {!tutorialOpen && <NotificationSetupPrompt onToast={setToast} />}
+      {tutorialOpen && <OnboardingTutorial user={user} onComplete={completeTutorial} onNavigate={navigate} onToast={setToast} />}
       {newEvent && <NewEvent people={data.people.filter((p) => p.id !== user.id)} onSave={saveEvent} onClose={() => setNewEvent(false)} />}
       <Toast message={toast} onClose={() => setToast("")} />
     </>
