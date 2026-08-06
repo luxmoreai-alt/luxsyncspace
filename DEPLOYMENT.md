@@ -50,7 +50,29 @@ https://your-api-host.example/api/health
 
 ## 2. Deploy the PWA to Vercel
 
-Import the Git repository in Vercel and keep the project root as the repository root (`.`). The included `vercel.json` supplies the Vite workspace build and SPA routing settings.
+Import the Git repository in Vercel. Either of these configurations is supported:
+
+### Recommended: client directory as the Vercel root
+
+```text
+Root directory: apps/client
+Install command: npm install
+Build command: npm run build
+Output directory: dist
+```
+
+The `apps/client/vercel.json` file supplies these settings and SPA routing.
+
+### Alternative: repository root as the Vercel root
+
+```text
+Root directory: .
+Install command: npm install
+Build command: npm run build -w apps/client
+Output directory: apps/client/dist
+```
+
+The root `vercel.json` supplies these workspace settings.
 
 Add these Vercel environment variables for Production, Preview, and Development:
 
@@ -59,14 +81,14 @@ VITE_API_URL=https://your-api-host.example/api
 VITE_SOCKET_URL=https://your-api-host.example
 ```
 
-Deploy the project. Vercel will run:
+With `apps/client` selected as the root, Vercel will run:
 
 ```text
 npm install
-npm run build -w apps/client
+npm run build
 ```
 
-The generated frontend is served from `apps/client/dist`.
+The generated frontend is served from `dist`.
 
 ## 3. Connect both deployments
 
