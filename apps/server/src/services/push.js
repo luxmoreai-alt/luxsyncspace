@@ -17,7 +17,11 @@ async function deliver(rows, payload) {
         await webpush.sendNotification(
           { endpoint: row.endpoint, keys: { p256dh: row.p256dh, auth: row.auth } },
           JSON.stringify(payload),
-          { TTL: 60 * 60 }
+          {
+            TTL: payload.type === "call" ? 45 : 60 * 60,
+            urgency: payload.type === "call" ? "high" : "normal",
+            topic: payload.type === "call" ? `call-${payload.meetingId}`.slice(0, 32) : undefined
+          }
         );
       } catch (error) {
         if (error?.statusCode === 404 || error?.statusCode === 410) {

@@ -167,7 +167,12 @@ async function shareMeetingInvitation({ req, event, recipientIds, organizer, isC
         : `Meeting invitation from ${organizer.full_name}`,
       body: event.title,
       tag: `${isCall ? "call" : "meeting-invite"}-${event.id}`,
-      url: `/?meeting=${event.id}`
+      url: `/?meeting=${event.id}`,
+      ...(isCall ? {
+        type: "call",
+        meetingId: event.id,
+        mode: event.meeting_mode
+      } : {})
     }).catch(console.error);
   }
 }

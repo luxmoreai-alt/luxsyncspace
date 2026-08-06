@@ -2,6 +2,7 @@ import { api } from "./api";
 
 const ENABLED_KEY = "luxsyncspace_notifications_enabled";
 let sharedAudioContext = null;
+let subscriptionRefresh = null;
 
 function getAudioContext() {
   const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -35,27 +36,83 @@ export async function enableNotifications() {
   if (!notificationsSupported()) throw new Error("Notifications are not supported in this browser");
   const permission = await Notification.requestPermission();
   const enabled = permission === "granted";
-  localStorage.setItem(ENABLED_KEY, String(enabled));
   if (!enabled) throw new Error("Notification permission was not granted");
-  const registration = await (
-    navigator.serviceWorker.getRegistration()
-    || navigator.serviceWorker.register("/sw.js")
-  );
-  await navigator.serviceWorker.ready;
-  const { publicKey } = await api("/push/config");
-  if (!publicKey) throw new Error("Push notifications are not configured");
-  const existing = await registration.pushManager.getSubscription();
-  const subscription = existing || await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(publicKey)
-  });
-  const json = subscription.toJSON();
-  await api("/push/subscribe", {
-    method: "POST",
-    body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys })
-  });
+  localStorage.setItem(ENABLED_KEY, "true");
+  try {
+    await refreshNotificationSubscription();
+  } catch (error) {
+    localStorage.setItem(ENABLED_KEY, "false");
+    throw error;
+  }
   await playNotificationSound();
+  window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
   return true;
+}
+
+async function getNotificationRegistration() {
+  const existing = await navigator.serviceWorker.getRegistration();
+  if (existing) return existing;
+  await navigator.serviceWorker.register("/sw.js");
+  return navigator.serviceWorker.ready;
+}
+
+export async function refreshNotificationSubscription() {
+  if (!notificationsEnabled()) return false;
+  if (subscriptionRefresh) return subscriptionRefresh;
+  subscriptionRefresh = (async () => {
+    const registration = await getNotificationRegistration();
+    await navigator.serviceWorker.ready;
+    const { publicKey } = await api("/push/config");
+    if (!publicKey) throw new Error("Push notifications are not configured");
+    const existing = await registration.pushManager.getSubscription();
+    const subscription = existing || await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey)
+    });
+    const json = subscription.toJSON();
+    await api("/push/subscribe", {
+      method: "POST",
+      body: JSON.stringify({ endpoint: json.endpoint, keys: json.keys })
+    });
+    return true;
+  })();
+  try {
+    return await subscriptionRefresh;
+  } finally {
+    subscriptionRefresh = null;
+  }
+}
+
+export async function showIncomingCallNotification(call) {
+  if (!notificationsEnabled() || !call?.meeting?.id) return;
+  const registration = await getNotificationRegistration();
+  const isAudio = call.mode === "audio";
+  await registration.showNotification(`Incoming ${isAudio ? "voice" : "video"} call`, {
+    body: call.caller?.full_name || call.meeting.title || "LuxSyncspace call",
+    tag: `call-${call.meeting.id}`,
+    icon: "/icons/luxsyncspace-192.png",
+    badge: "/icons/luxsyncspace-192.png",
+    vibrate: [500, 220, 500, 900, 500, 220, 500],
+    renotify: true,
+    requireInteraction: true,
+    silent: false,
+    actions: [
+      { action: "accept", title: "Accept" },
+      { action: "reject", title: "Reject" }
+    ],
+    data: {
+      type: "call",
+      meetingId: call.meeting.id,
+      url: `/?meeting=${call.meeting.id}`
+    }
+  });
+}
+
+export async function dismissIncomingCallNotification(meetingId) {
+  if (!("serviceWorker" in navigator) || !meetingId) return;
+  const registration = await navigator.serviceWorker.getRegistration();
+  const notifications = await registration?.getNotifications({ tag: `call-${meetingId}` }) || [];
+  notifications.forEach((notification) => notification.close());
 }
 
 export async function disableNotifications() {
@@ -69,6 +126,7 @@ export async function disableNotifications() {
     await subscription.unsubscribe();
   }
   localStorage.setItem(ENABLED_KEY, "false");
+  window.dispatchEvent(new CustomEvent("luxsyncspace:notifications-changed"));
 }
 
 function urlBase64ToUint8Array(value) {
@@ -82,7 +140,7 @@ export async function showWorkspaceNotification(title, body, tag = "luxsyncspace
   await playNotificationSound(sound).catch(() => {});
   if (!notificationsEnabled()) return;
   if (document.visibilityState === "visible") return;
-  const registration = await navigator.serviceWorker.ready;
+  const registration = await getNotificationRegistration();
   await registration.showNotification(title, {
     body,
     tag,

@@ -278,12 +278,26 @@ function MeetingControl({ active, onClick, icon: Icon, label }) {
 function VideoTile({ participant, localVideoRef, cameraOn, speakerOn }) {
   const remoteVideoRef = useRef();
   const videoRef = localVideoRef || remoteVideoRef;
+  const [soundBlocked, setSoundBlocked] = useState(false);
+
+  function resumePlayback() {
+    if (!videoRef.current) return;
+    videoRef.current.play()
+      .then(() => setSoundBlocked(false))
+      .catch(() => {
+        if (!participant.local && speakerOn) setSoundBlocked(true);
+      });
+  }
+
   useEffect(() => {
-    if (videoRef.current && participant.stream) videoRef.current.srcObject = participant.stream;
-  }, [participant.stream]);
+    if (!videoRef.current || !participant.stream) return;
+    videoRef.current.srcObject = participant.stream;
+    resumePlayback();
+  }, [participant.stream, speakerOn]);
   const hasVideo = cameraOn && participant.stream?.getVideoTracks().some((track) => track.enabled && track.readyState === "live");
   return <article className="meeting-tile">
     <video ref={videoRef} autoPlay playsInline muted={participant.local || !speakerOn} />
+    {soundBlocked && <button className="meeting-enable-audio" onClick={resumePlayback}><Volume2 size={18} /> Tap to enable sound</button>}
     {!hasVideo && <div className="meeting-avatar" style={{ "--participant": participant.user?.avatar_color }}><span>{participant.user?.initials || "?"}</span></div>}
     {participant.raised && <span className="raised-hand"><Hand size={16} /> Hand raised</span>}
     <footer><b>{participant.user?.full_name || "Joining…"}{participant.local ? " (You)" : ""}</b>{participant.local && !participant.stream && <small>No media access</small>}</footer>

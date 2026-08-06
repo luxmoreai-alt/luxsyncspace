@@ -1,4 +1,4 @@
-const CACHE_NAME = "luxsyncspace-v1";
+const CACHE_NAME = "luxsyncspace-v2";
 const APP_SHELL = [
   "/",
   "/manifest.webmanifest",
@@ -49,6 +49,18 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
+  const isCall = event.notification.data?.type === "call";
+  if (isCall && event.action === "reject") {
+    event.waitUntil(
+      self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+        clients.forEach((client) => client.postMessage({
+          type: "luxsyncspace:call-rejected",
+          meetingId: event.notification.data?.meetingId
+        }));
+      })
+    );
+    return;
+  }
   const targetUrl = event.notification.data?.url || "/";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
@@ -63,18 +75,34 @@ self.addEventListener("notificationclick", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  const data = event.data?.json() || {};
+  let data = {};
+  try {
+    data = event.data?.json() || {};
+  } catch {
+    data = { body: event.data?.text() || "You have a new workspace update." };
+  }
+  const isCall = data.type === "call";
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
-      if (clients.some((client) => client.visibilityState === "visible")) return;
+      if (!isCall && clients.some((client) => client.visibilityState === "visible")) return;
       return self.registration.showNotification(data.title || "LuxSyncspace", {
         body: data.body || "You have a new workspace update.",
         tag: data.tag || "luxsyncspace",
         icon: "/icons/luxsyncspace-192.png",
         badge: "/icons/luxsyncspace-192.png",
-        vibrate: [180, 80, 180],
+        vibrate: isCall ? [500, 220, 500, 900, 500, 220, 500] : [180, 80, 180],
         renotify: true,
-        data: { url: data.url || "/" }
+        requireInteraction: isCall,
+        silent: false,
+        actions: isCall ? [
+          { action: "accept", title: "Accept" },
+          { action: "reject", title: "Reject" }
+        ] : [],
+        data: {
+          type: data.type || "message",
+          meetingId: data.meetingId,
+          url: data.url || "/"
+        }
       });
     })
   );

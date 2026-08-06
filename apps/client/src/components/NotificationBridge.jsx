@@ -1,16 +1,38 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { io } from "socket.io-client";
 import { SOCKET_URL, socketOptions } from "../lib/api";
-import { primeNotificationAudio, showWorkspaceNotification } from "../lib/notifications";
+import { primeNotificationAudio, refreshNotificationSubscription, showIncomingCallNotification, showWorkspaceNotification } from "../lib/notifications";
 
 export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, onNotification }) {
+  const channelsRef = useRef(channels);
+  const callbacksRef = useRef({ onRefresh, onIncomingCall, onNotification });
+
   useEffect(() => {
-    const unlockAudio = () => { primeNotificationAudio().catch(() => {}); };
-    window.addEventListener("pointerdown", unlockAudio, { once: true });
-    window.addEventListener("keydown", unlockAudio, { once: true });
+    channelsRef.current = channels;
+    callbacksRef.current = { onRefresh, onIncomingCall, onNotification };
+  }, [channels, onRefresh, onIncomingCall, onNotification]);
+
+  useEffect(() => {
+    let lastSubscriptionRefresh = 0;
+    const prepareDevice = () => {
+      primeNotificationAudio().catch(() => {});
+      if (Date.now() - lastSubscriptionRefresh > 15 * 60_000) {
+        lastSubscriptionRefresh = Date.now();
+        refreshNotificationSubscription().catch(() => {});
+      }
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") prepareDevice();
+    };
+    window.addEventListener("pointerdown", prepareDevice, { passive: true });
+    window.addEventListener("touchend", prepareDevice, { passive: true });
+    window.addEventListener("keydown", prepareDevice);
+    document.addEventListener("visibilitychange", handleVisibility);
+    prepareDevice();
+
     const socket = io(SOCKET_URL, socketOptions());
     const notify = (title, body, tag, sound = "message") => {
-      onNotification?.({ title, body, tag, sound, id: crypto.randomUUID() });
+      callbacksRef.current.onNotification?.({ title, body, tag, sound, id: crypto.randomUUID() });
       showWorkspaceNotification(title, body, tag, sound);
     };
     socket.on("direct:message", (message) => {
@@ -27,7 +49,7 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     });
     socket.on("channel:message", (message) => {
       if (message.sender_id === user.id) return;
-      const channel = channels.find((item) => item.id === message.channel_id);
+      const channel = channelsRef.current.find((item) => item.id === message.channel_id);
       if (channel?.muted) return;
       notify(`${message.sender_name} in #${channel?.name || "group"}`, message.body || `Shared ${message.file_name || "a file"}`, `channel-${message.channel_id}`);
     });
@@ -42,20 +64,23 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall, 
     });
     socket.on("event:cancelled", (event) => {
       notify(event.title, event.body, event.tag, "meeting");
-      onRefresh();
+      callbacksRef.current.onRefresh();
     });
     socket.on("channel:membership-updated", () => {
-      onRefresh();
+      callbacksRef.current.onRefresh();
     });
     socket.on("call:incoming", (call) => {
-      onIncomingCall(call);
+      callbacksRef.current.onIncomingCall(call);
+      showIncomingCallNotification(call).catch(() => {});
     });
     return () => {
-      window.removeEventListener("pointerdown", unlockAudio);
-      window.removeEventListener("keydown", unlockAudio);
+      window.removeEventListener("pointerdown", prepareDevice);
+      window.removeEventListener("touchend", prepareDevice);
+      window.removeEventListener("keydown", prepareDevice);
+      document.removeEventListener("visibilitychange", handleVisibility);
       socket.disconnect();
     };
-  }, [user.id, channels, onRefresh, onIncomingCall, onNotification]);
+  }, [user.id]);
 
   return null;
 }

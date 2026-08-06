@@ -16,6 +16,8 @@ import { Toast } from "./components/Toast";
 import { Meetings } from "./pages/Meetings";
 import { IncomingCall } from "./components/IncomingCall";
 import { InAppNotification } from "./components/InAppNotification";
+import { NotificationSetupPrompt } from "./components/NotificationSetupPrompt";
+import { dismissIncomingCallNotification } from "./lib/notifications";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -58,6 +60,16 @@ export default function App() {
     };
     window.addEventListener("luxsyncspace:unauthorized", handleUnauthorized);
     return () => window.removeEventListener("luxsyncspace:unauthorized", handleUnauthorized);
+  }, []);
+
+  useEffect(() => {
+    if (!("serviceWorker" in navigator)) return;
+    const handleCallAction = (event) => {
+      if (event.data?.type !== "luxsyncspace:call-rejected") return;
+      setIncomingCall((current) => current?.meeting?.id === event.data.meetingId ? null : current);
+    };
+    navigator.serviceWorker.addEventListener("message", handleCallAction);
+    return () => navigator.serviceWorker.removeEventListener("message", handleCallAction);
   }, []);
 
   async function login(email, password) {
@@ -140,6 +152,20 @@ export default function App() {
     });
   }
 
+  function declineIncomingCall() {
+    const meetingId = incomingCall?.meeting?.id;
+    setIncomingCall(null);
+    dismissIncomingCallNotification(meetingId).catch(() => {});
+  }
+
+  function acceptIncomingCall() {
+    const call = incomingCall;
+    if (!call) return;
+    setIncomingCall(null);
+    dismissIncomingCallNotification(call.meeting?.id).catch(() => {});
+    joinMeeting(call.meeting);
+  }
+
   if (loading) return <div className="app-loading"><span className="loading-logo">S</span><p>Opening your workspace…</p></div>;
   if (!user) return <Login onLogin={login} />;
   if (user.must_change_password) return <ChangePassword user={user} onLogout={logout} onChanged={() => { setUser((current) => ({ ...current, must_change_password: false })); setToast("Password updated successfully"); }} />;
@@ -162,8 +188,9 @@ export default function App() {
         {!["home", "chat", "meetings", "calendar", "people", "settings", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
       <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={setNotification} />
-      <IncomingCall call={incomingCall} onDecline={() => setIncomingCall(null)} onAccept={() => { const call = incomingCall; setIncomingCall(null); joinMeeting(call.meeting); }} />
+      <IncomingCall call={incomingCall} onDecline={declineIncomingCall} onAccept={acceptIncomingCall} />
       <InAppNotification notification={notification} onClose={() => setNotification(null)} />
+      <NotificationSetupPrompt onToast={setToast} />
       {newEvent && <NewEvent people={data.people.filter((p) => p.id !== user.id)} onSave={saveEvent} onClose={() => setNewEvent(false)} />}
       <Toast message={toast} onClose={() => setToast("")} />
     </>
