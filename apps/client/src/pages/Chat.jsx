@@ -268,7 +268,14 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
             {filteredPeople.map((person) => <article key={person.id}>
               <Avatar person={person} size="lg" showPresence />
               <div><h3>{person.full_name}</h3><p><BriefcaseBusiness size={13} /> {person.title}</p><p><MapPin size={13} /> {person.location || person.department}</p><span>{person.employee_id} · {person.department}</span></div>
-              {person.id !== user.id && <button className="button button-secondary" onClick={() => setSelectedPerson(person)}><MessageSquareText size={16} /> Message</button>}
+              {person.id !== user.id && <div className="employee-chat-actions">
+                <button className="button button-secondary employee-message-button" onClick={() => setSelectedPerson(person)}><MessageSquareText size={16} /> Message</button>
+                <div className="mobile-employee-call-actions">
+                  <button type="button" onClick={() => setSelectedPerson(person)} title={`Message ${person.full_name}`} aria-label={`Message ${person.full_name}`}><MessageSquareText size={19} /></button>
+                  <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={19} /></button>
+                  <button type="button" onClick={() => onStartCall(person, "video")} title={`Video call ${person.full_name}`} aria-label={`Video call ${person.full_name}`}><Video size={19} /></button>
+                </div>
+              </div>}
             </article>)}
           </div>
         </section>

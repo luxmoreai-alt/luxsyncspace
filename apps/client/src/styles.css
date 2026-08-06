@@ -395,6 +395,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .employee-chat-grid p { color: #737f91; font-size: 9px; display: flex; align-items: center; gap: 4px; margin: 0 0 3px; }
 .employee-chat-grid article > div > span { color: #9aa3b0; font-size: 8px; }
 .employee-chat-grid .button { padding: 7px 9px; font-size: 9px; }
+.mobile-employee-call-actions { display: none; }
 
 /* Calendar */
 .calendar-layout { display: grid; grid-template-columns: minmax(590px, 1fr) 320px; gap: 16px; align-items: start; }
@@ -656,6 +657,12 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .mobile-channel-browser nav > button > svg { color: #8a96a8; }
   .mobile-channel-icon { width: 42px; height: 42px; border-radius: 11px; color: var(--blue); background: var(--blue-soft); display: grid; place-items: center; }
   .employee-chat-grid { grid-template-columns: 1fr; }
+  .employee-chat-grid article { grid-template-columns: auto minmax(0, 1fr) auto; padding: 14px 12px; }
+  .employee-message-button { display: none; }
+  .mobile-employee-call-actions { display: flex; gap: 5px; }
+  .mobile-employee-call-actions button { width: 38px; height: 38px; padding: 0; border: 1px solid var(--line); border-radius: 10px; color: #54709d; background: white; display: grid; place-items: center; }
+  .mobile-employee-call-actions button:first-child { color: var(--blue); background: var(--blue-soft); border-color: #d8e3fa; }
+  .mobile-employee-call-actions button:active { color: white; background: var(--blue); }
   .conversation-header { min-height: 72px; padding: 10px 12px; }
   .mobile-conversation-back { width: 36px; height: 40px; margin-left: -7px; border: 0; border-radius: 8px; color: #607087; background: transparent; display: grid; place-items: center; }
   .mobile-conversation-back:active { color: var(--blue); background: var(--blue-soft); }
