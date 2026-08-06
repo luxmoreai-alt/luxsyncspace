@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Pencil, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, authStore, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -33,6 +33,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
   const [messageMenuId, setMessageMenuId] = useState(null);
   const [reactionMessageId, setReactionMessageId] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
+  const [editingMessage, setEditingMessage] = useState(null);
   const [forwardingMessage, setForwardingMessage] = useState(null);
   const endRef = useRef();
   const textareaRef = useRef();
@@ -90,7 +91,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     setMessageMenuId(null);
     setReactionMessageId(null);
     setReplyingTo(null);
-  }, [selected]);
+    setEditingMessage(null);
+  }, [selected, selectedPerson?.id]);
 
   useEffect(() => {
     if (selected) setChannelMutedState(Boolean(activeChannel?.muted));
@@ -125,6 +127,10 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
         return item.reply_to_id === deleted.id ? { ...item, reply_deleted_at: deleted.deleted_at } : item;
       }));
     });
+    socketRef.current.on("channel:message-edited", (updated) => {
+      if (selectedChannelRef.current !== updated.channelId) return;
+      setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
+    });
     socketRef.current.on("channel:message-reaction", (update) => {
       if (selectedChannelRef.current !== update.channelId) return;
       setMessages((current) => current.map((item) => {
@@ -149,6 +155,28 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
           .then(() => onConversationRead?.("direct", incoming.sender_id))
           .catch(() => {});
       }
+    });
+    socketRef.current.on("direct:message-edited", (updated) => {
+      if (!selectedPersonRef.current || ![updated.sender_id, updated.recipient_id].includes(selectedPersonRef.current.id)) return;
+      setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
+    });
+    socketRef.current.on("direct:message-deleted", (deleted) => {
+      if (!selectedPersonRef.current || ![deleted.sender_id, deleted.recipient_id].includes(selectedPersonRef.current.id)) return;
+      setMessages((current) => current.map((item) => {
+        if (item.id === deleted.id) return { ...item, body: "", attachment_id: null, deleted_at: deleted.deleted_at, reactions: [] };
+        return item.reply_to_id === deleted.id ? { ...item, reply_deleted_at: deleted.deleted_at } : item;
+      }));
+    });
+    socketRef.current.on("direct:message-reaction", (update) => {
+      if (!selectedPersonRef.current || ![update.sender_id, update.recipient_id].includes(selectedPersonRef.current.id)) return;
+      setMessages((current) => current.map((item) => {
+        if (item.id !== update.id) return item;
+        const previous = new Map((item.reactions || []).map((reaction) => [reaction.emoji, reaction]));
+        return { ...item, reactions: update.reactions.map((reaction) => ({
+          ...reaction,
+          reacted_by_me: update.actorId === user.id ? reaction.emoji === update.userEmoji : Boolean(previous.get(reaction.emoji)?.reacted_by_me)
+        })) };
+      }));
     });
     return () => {
       socketRef.current?.disconnect();
@@ -222,25 +250,31 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     const body = message;
     const selectedAttachment = attachment;
     const selectedReply = replyingTo;
+    const selectedEdit = editingMessage;
     setMessage("");
     setAttachment(null);
     setReplyingTo(null);
+    setEditingMessage(null);
     setEmojiOpen(false);
     try {
-      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
-      const sent = await api(endpoint, {
-        method: "POST",
-        body: JSON.stringify({
-          body,
-          attachmentId: selectedAttachment?.id || null,
-          replyTo: selectedPerson ? null : selectedReply?.id || null
-        })
-      });
-      setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
+      if (selectedEdit) {
+        const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${selectedEdit.id}` : `/channels/${selected}/messages/${selectedEdit.id}`;
+        const updated = await api(endpoint, { method: "PATCH", body: JSON.stringify({ body }) });
+        setMessages((current) => current.map((item) => item.id === updated.id ? { ...item, body: updated.body, edited_at: updated.edited_at } : item));
+        onToast("Message edited");
+      } else {
+        const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
+        const sent = await api(endpoint, {
+          method: "POST",
+          body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null, replyTo: selectedReply?.id || null })
+        });
+        setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
+      }
     } catch (error) {
       setMessage(body);
       setAttachment(selectedAttachment);
       setReplyingTo(selectedReply);
+      setEditingMessage(selectedEdit);
       onToast(error.message);
     }
     finally { setBusy(false); }
@@ -253,9 +287,20 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     requestAnimationFrame(() => textareaRef.current?.focus());
   }
 
+  function editMessage(item) {
+    setEditingMessage(item);
+    setMessage(item.body);
+    setAttachment(null);
+    setReplyingTo(null);
+    setMessageMenuId(null);
+    setReactionMessageId(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
   async function reactToMessage(item, emoji) {
     try {
-      const result = await api(`/channels/${selected}/messages/${item.id}/reactions`, {
+      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}/reactions` : `/channels/${selected}/messages/${item.id}/reactions`;
+      const result = await api(endpoint, {
         method: "POST",
         body: JSON.stringify({ emoji })
       });
@@ -270,7 +315,8 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
 
   async function deleteMessage(item, scope) {
     try {
-      const result = await api(`/channels/${selected}/messages/${item.id}?scope=${scope}`, { method: "DELETE" });
+      const endpoint = selectedPerson ? `/direct/${selectedPerson.id}/messages/${item.id}` : `/channels/${selected}/messages/${item.id}`;
+      const result = await api(`${endpoint}?scope=${scope}`, { method: "DELETE" });
       if (scope === "me") {
         setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
       } else {
@@ -506,7 +552,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
                 {startsNewDay && <div className="date-divider"><span>{messageDateLabel(item.sent_at)}</span></div>}
                 <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`}>
                 {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
-                <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}</time>{mine && selected && (item.seen_by_all
+                <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}{item.edited_at ? " · edited" : ""}</time>{mine && selected && (item.seen_by_all
                   ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
                   : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
                   {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
@@ -519,15 +565,16 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
                     {item.reactions.map((reaction) => <button className={reaction.reacted_by_me ? "mine" : ""} onClick={() => reactToMessage(item, reaction.emoji)} key={reaction.emoji}><span>{reaction.emoji}</span><b>{reaction.count}</b></button>)}
                   </div>}
                 </div>
-                {selected && <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>}
-                {messageMenuId === item.id && selected && <div className={`message-actions-menu ${mine ? "align-mine" : ""}`}>
+                <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>
+                {messageMenuId === item.id && <div className={`message-actions-menu ${mine ? "align-mine" : ""}`}>
                   {!item.deleted_at && <><button onClick={() => setReactionMessageId(reactionMessageId === item.id ? null : item.id)}><Smile size={16} /> React</button>
                     <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
-                    <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button></>}
+                    <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button>
+                    {mine && item.body && <button onClick={() => editMessage(item)}><Pencil size={16} /> Edit</button>}</>}
                   <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
                   {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
                 </div>}
-                {reactionMessageId === item.id && selected && <div className={`message-reaction-picker ${mine ? "align-mine" : ""}`}>
+                {reactionMessageId === item.id && <div className={`message-reaction-picker ${mine ? "align-mine" : ""}`}>
                   {QUICK_REACTIONS.map((emoji) => <button onClick={() => reactToMessage(item, emoji)} key={emoji}>{emoji}</button>)}
                 </div>}
                 </div>
@@ -537,6 +584,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div ref={endRef} />
           </div>
           <form className="message-composer" onSubmit={send}>
+            {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
             <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {

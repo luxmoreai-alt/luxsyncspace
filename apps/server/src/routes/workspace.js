@@ -818,6 +818,28 @@ workspaceRouter.delete("/channels/:channelId/messages/:messageId", async (req, r
   } catch (error) { next(error); }
 });
 
+workspaceRouter.patch("/channels/:channelId/messages/:messageId", async (req, res, next) => {
+  try {
+    const { body } = z.object({ body: z.string().trim().min(1).max(5000) }).parse(req.body);
+    const [updated] = await sql`
+      UPDATE channel_messages message
+      SET body = ${body}, edited_at = NOW()
+      FROM channel_members member
+      WHERE message.id = ${req.params.messageId}
+        AND message.channel_id = ${req.params.channelId}
+        AND message.sender_id = ${req.auth.userId}
+        AND message.deleted_at IS NULL
+        AND member.channel_id = message.channel_id
+        AND member.user_id = ${req.auth.userId}
+      RETURNING message.id, message.body, message.edited_at
+    `;
+    if (!updated) return res.status(403).json({ error: "Only the sender can edit this message" });
+    const result = { ...updated, channelId: req.params.channelId };
+    req.app.get("io")?.to(`channel:${req.params.channelId}`).emit("channel:message-edited", result);
+    res.json(result);
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.post("/channels/:channelId/messages/:messageId/reactions", async (req, res, next) => {
   try {
     const { emoji } = z.object({ emoji: z.string().trim().min(1).max(16) }).parse(req.body);
@@ -884,12 +906,36 @@ workspaceRouter.get("/direct/:userId", async (req, res, next) => {
       SELECT dm.id, dm.body, dm.sent_at, u.id AS sender_id,
              CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS sender_name,
              u.initials, u.avatar_color,
-             a.id AS attachment_id, a.file_name, a.mime_type, a.file_size
+             a.id AS attachment_id, a.file_name, a.mime_type, a.file_size,
+             dm.deleted_at, dm.edited_at, dm.reply_to_id,
+             reply.body AS reply_body, reply.deleted_at AS reply_deleted_at,
+             CASE WHEN reply_user.hide_full_name THEN COALESCE(NULLIF(reply_user.display_name, ''), 'Team member') ELSE reply_user.full_name END AS reply_sender_name,
+             COALESCE((
+               SELECT json_agg(json_build_object(
+                 'emoji', grouped.emoji,
+                 'count', grouped.reaction_count,
+                 'reacted_by_me', grouped.reacted_by_me
+               ) ORDER BY grouped.first_reaction)
+               FROM (
+                 SELECT reaction.emoji, COUNT(*)::int AS reaction_count,
+                        BOOL_OR(reaction.user_id = ${req.auth.userId}) AS reacted_by_me,
+                        MIN(reaction.reacted_at) AS first_reaction
+                 FROM direct_message_reactions reaction
+                 WHERE reaction.message_id = dm.id
+                 GROUP BY reaction.emoji
+               ) grouped
+             ), '[]'::json) AS reactions
       FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
       LEFT JOIN message_attachments a ON a.id = dm.attachment_id
+      LEFT JOIN direct_messages reply ON reply.id = dm.reply_to_id
+      LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
       WHERE dm.organization_id = ${req.auth.organizationId}
         AND ((dm.sender_id = ${req.auth.userId} AND dm.recipient_id = ${req.params.userId})
           OR (dm.sender_id = ${req.params.userId} AND dm.recipient_id = ${req.auth.userId}))
+        AND NOT EXISTS (
+          SELECT 1 FROM direct_message_hidden hidden
+          WHERE hidden.message_id = dm.id AND hidden.user_id = ${req.auth.userId}
+        )
       ORDER BY dm.sent_at ASC LIMIT 300
     `;
     res.json({ messages });
@@ -914,25 +960,38 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
   try {
     const input = z.object({
       body: z.string().trim().max(5000).default(""),
-      attachmentId: z.string().uuid().nullable().optional()
+      attachmentId: z.string().uuid().nullable().optional(),
+      replyTo: z.string().uuid().nullable().optional()
     }).refine((value) => value.body || value.attachmentId, { message: "Enter a message or attach a file" }).parse(req.body);
     const [colleague] = await sql`SELECT id FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}`;
     if (!colleague || colleague.id === req.auth.userId) return res.status(400).json({ error: "Select another employee" });
     const [message] = await sql`
-      INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body, attachment_id)
-      SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${req.params.userId}, ${input.body}, a.id
+      INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body, attachment_id, reply_to_id)
+      SELECT ${req.auth.organizationId}, ${req.auth.userId}, ${req.params.userId}, ${input.body}, a.id,
+        (SELECT reply.id FROM direct_messages reply
+         WHERE reply.id = ${input.replyTo || null}
+           AND reply.organization_id = ${req.auth.organizationId}
+           AND ((reply.sender_id = ${req.auth.userId} AND reply.recipient_id = ${req.params.userId})
+             OR (reply.sender_id = ${req.params.userId} AND reply.recipient_id = ${req.auth.userId}))
+           AND reply.deleted_at IS NULL)
       FROM (SELECT 1) seed
       LEFT JOIN message_attachments a ON a.id = ${input.attachmentId || null}
         AND a.organization_id = ${req.auth.organizationId} AND a.uploader_id = ${req.auth.userId}
       WHERE ${input.attachmentId || null}::uuid IS NULL OR a.id IS NOT NULL
-      RETURNING id, body, sent_at, attachment_id
+      RETURNING id, body, sent_at, attachment_id, reply_to_id
     `;
     if (!message) return res.status(400).json({ error: "The selected attachment is not available" });
     const [attachment] = message.attachment_id ? await sql`
       SELECT file_name, mime_type, file_size FROM message_attachments WHERE id = ${message.attachment_id}
     ` : [null];
     const [sender] = await sql`SELECT id AS sender_id, CASE WHEN hide_full_name THEN COALESCE(NULLIF(display_name, ''), 'Team member') ELSE full_name END AS sender_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
-    const result = { ...message, ...sender, ...attachment };
+    const [reply] = message.reply_to_id ? await sql`
+      SELECT original.body AS reply_body, original.deleted_at AS reply_deleted_at,
+             CASE WHEN author.hide_full_name THEN COALESCE(NULLIF(author.display_name, ''), 'Team member') ELSE author.full_name END AS reply_sender_name
+      FROM direct_messages original JOIN users author ON author.id = original.sender_id
+      WHERE original.id = ${message.reply_to_id}
+    ` : [null];
+    const result = { ...message, ...sender, ...attachment, ...reply, reactions: [] };
     req.app.get("io")?.to(`user:${req.params.userId}`).emit("direct:message", { ...result, recipient_id: req.params.userId });
     sendPushToUser(req.params.userId, {
       title: sender.sender_name,
@@ -941,6 +1000,101 @@ workspaceRouter.post("/direct/:userId", async (req, res, next) => {
       url: "/"
     }).catch(console.error);
     res.status(201).json(result);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.patch("/direct/:userId/messages/:messageId", async (req, res, next) => {
+  try {
+    const { body } = z.object({ body: z.string().trim().min(1).max(5000) }).parse(req.body);
+    const [updated] = await sql`
+      UPDATE direct_messages
+      SET body = ${body}, edited_at = NOW()
+      WHERE id = ${req.params.messageId}
+        AND organization_id = ${req.auth.organizationId}
+        AND sender_id = ${req.auth.userId}
+        AND recipient_id = ${req.params.userId}
+        AND deleted_at IS NULL
+      RETURNING id, body, edited_at, sender_id, recipient_id
+    `;
+    if (!updated) return res.status(403).json({ error: "Only the sender can edit this message" });
+    for (const userId of [updated.sender_id, updated.recipient_id]) {
+      req.app.get("io")?.to(`user:${userId}`).emit("direct:message-edited", updated);
+    }
+    res.json(updated);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.delete("/direct/:userId/messages/:messageId", async (req, res, next) => {
+  try {
+    const scope = z.enum(["me", "everyone"]).parse(req.query.scope || "me");
+    const [message] = await sql`
+      SELECT id, sender_id, recipient_id, deleted_at
+      FROM direct_messages
+      WHERE id = ${req.params.messageId} AND organization_id = ${req.auth.organizationId}
+        AND ((sender_id = ${req.auth.userId} AND recipient_id = ${req.params.userId})
+          OR (sender_id = ${req.params.userId} AND recipient_id = ${req.auth.userId}))
+    `;
+    if (!message) return res.status(404).json({ error: "Message not found" });
+    if (scope === "me") {
+      await sql`
+        INSERT INTO direct_message_hidden (message_id, user_id)
+        VALUES (${message.id}, ${req.auth.userId}) ON CONFLICT DO NOTHING
+      `;
+      return res.json({ id: message.id, scope });
+    }
+    if (message.sender_id !== req.auth.userId) return res.status(403).json({ error: "Only the sender can delete this message for everyone" });
+    const [deleted] = await sql`
+      UPDATE direct_messages
+      SET body = '', attachment_id = NULL, deleted_at = NOW(), deleted_by = ${req.auth.userId}
+      WHERE id = ${message.id} AND deleted_at IS NULL
+      RETURNING id, deleted_at, sender_id, recipient_id
+    `;
+    if (!deleted) return res.status(400).json({ error: "This message is already deleted" });
+    await sql`DELETE FROM direct_message_reactions WHERE message_id = ${deleted.id}`;
+    const result = { ...deleted, scope };
+    for (const userId of [deleted.sender_id, deleted.recipient_id]) {
+      req.app.get("io")?.to(`user:${userId}`).emit("direct:message-deleted", result);
+    }
+    res.json(result);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/direct/:userId/messages/:messageId/reactions", async (req, res, next) => {
+  try {
+    const { emoji } = z.object({ emoji: z.string().trim().min(1).max(16) }).parse(req.body);
+    const [message] = await sql`
+      SELECT id, sender_id, recipient_id FROM direct_messages
+      WHERE id = ${req.params.messageId} AND organization_id = ${req.auth.organizationId}
+        AND deleted_at IS NULL
+        AND ((sender_id = ${req.auth.userId} AND recipient_id = ${req.params.userId})
+          OR (sender_id = ${req.params.userId} AND recipient_id = ${req.auth.userId}))
+    `;
+    if (!message) return res.status(404).json({ error: "Message not found" });
+    const [existing] = await sql`
+      SELECT emoji FROM direct_message_reactions
+      WHERE message_id = ${message.id} AND user_id = ${req.auth.userId}
+    `;
+    const userEmoji = existing?.emoji === emoji ? null : emoji;
+    if (!userEmoji) {
+      await sql`DELETE FROM direct_message_reactions WHERE message_id = ${message.id} AND user_id = ${req.auth.userId}`;
+    } else {
+      await sql`
+        INSERT INTO direct_message_reactions (message_id, user_id, emoji)
+        VALUES (${message.id}, ${req.auth.userId}, ${emoji})
+        ON CONFLICT (message_id, user_id) DO UPDATE SET emoji = EXCLUDED.emoji, reacted_at = NOW()
+      `;
+    }
+    const reactions = await sql`
+      SELECT emoji, COUNT(*)::int AS count,
+             BOOL_OR(user_id = ${req.auth.userId}) AS reacted_by_me
+      FROM direct_message_reactions WHERE message_id = ${message.id}
+      GROUP BY emoji ORDER BY MIN(reacted_at)
+    `;
+    const result = { id: message.id, actorId: req.auth.userId, userEmoji, reactions, sender_id: message.sender_id, recipient_id: message.recipient_id };
+    for (const userId of [message.sender_id, message.recipient_id]) {
+      req.app.get("io")?.to(`user:${userId}`).emit("direct:message-reaction", result);
+    }
+    res.json(result);
   } catch (error) { next(error); }
 });
 
@@ -976,6 +1130,51 @@ workspaceRouter.post("/events", async (req, res, next) => {
     await shareMeetingInvitation({ req, event, recipientIds: attendeeIds, organizer });
     invalidateCache(`events:${req.auth.organizationId}`);
     res.status(201).json(event);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/events/:eventId/attendees", async (req, res, next) => {
+  try {
+    const eventId = z.string().uuid().parse(req.params.eventId);
+    const input = z.object({ attendeeIds: z.array(z.string().uuid()).min(1).max(100) }).parse(req.body);
+    const [event] = await sql`
+      SELECT * FROM events
+      WHERE id = ${eventId} AND organization_id = ${req.auth.organizationId}
+    `;
+    if (!event) return res.status(404).json({ error: "Event or meeting not found" });
+    if (event.cancelled_at) return res.status(400).json({ error: "People cannot be added to a cancelled meeting" });
+
+    const role = await currentRole(req.auth.userId);
+    const canManage = event.organizer_id === req.auth.userId || ["hr", "senior_leader"].includes(role);
+    if (!canManage) return res.status(403).json({ error: "Only the organizer, HR, or a senior leader can add people" });
+
+    const requestedIds = [...new Set(input.attendeeIds)].filter((id) => id !== req.auth.userId);
+    const validPeople = requestedIds.length ? await sql`
+      SELECT id FROM users
+      WHERE organization_id = ${req.auth.organizationId}
+        AND id = ANY(${requestedIds}::uuid[])
+        AND employment_status = 'active'
+    ` : [];
+    if (validPeople.length !== requestedIds.length) return res.status(400).json({ error: "One or more selected employees are unavailable" });
+
+    const existing = requestedIds.length ? await sql`
+      SELECT user_id FROM event_attendees
+      WHERE event_id = ${eventId} AND user_id = ANY(${requestedIds}::uuid[])
+    ` : [];
+    const existingIds = new Set(existing.map((attendee) => attendee.user_id));
+    const newAttendeeIds = requestedIds.filter((id) => !existingIds.has(id));
+    if (!newAttendeeIds.length) return res.json({ added: 0, message: "Everyone selected is already invited" });
+
+    await sql`
+      INSERT INTO event_attendees (event_id, user_id, response)
+      SELECT ${eventId}, attendee_id, 'accepted'
+      FROM unnest(${newAttendeeIds}::uuid[]) AS attendee_id
+      ON CONFLICT DO NOTHING
+    `;
+    const [organizer] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
+    await shareMeetingInvitation({ req, event, recipientIds: newAttendeeIds, organizer });
+    invalidateCache(`events:${req.auth.organizationId}`);
+    res.json({ added: newAttendeeIds.length, message: `${newAttendeeIds.length} ${newAttendeeIds.length === 1 ? "person" : "people"} added and invited` });
   } catch (error) { next(error); }
 });
 

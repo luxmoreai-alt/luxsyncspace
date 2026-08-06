@@ -1,12 +1,13 @@
 import { useState } from "react";
-import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, Users, Video } from "lucide-react";
+import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, UserPlus, Users, Video } from "lucide-react";
 import { format } from "date-fns";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 
-export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onCancelEvent, onToast }) {
+export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onCancelEvent, onAddAttendees, onToast }) {
   const [instantOpen, setInstantOpen] = useState(false);
   const [cancelTarget, setCancelTarget] = useState(null);
+  const [peopleTarget, setPeopleTarget] = useState(null);
   const scheduled = events.filter((event) => new Date(event.ends_at) > new Date());
   const upcoming = scheduled.filter((event) => !event.cancelled_at);
 
@@ -35,7 +36,7 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
             const canCancel = !cancelled && (event.organizer_id === user.id || ["hr", "senior_leader"].includes(user.role));
             return <article className={cancelled ? "cancelled" : ""} key={event.id}>
               <div className="meeting-date"><b>{format(new Date(event.starts_at), "d")}</b><small>{format(new Date(event.starts_at), "MMM")}</small></div>
-              <div className="meeting-list-main">{cancelled ? <span className="meeting-cancelled-chip"><Ban size={13} /> Cancelled</span> : <span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span>}<h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p>{cancelled && event.cancellation_reason && <p className="cancellation-reason">Reason: {event.cancellation_reason}</p>}<div className="attendee-stack">{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited</small></div></div>
+              <div className="meeting-list-main">{cancelled ? <span className="meeting-cancelled-chip"><Ban size={13} /> Cancelled</span> : <span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span>}<h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p>{cancelled && event.cancellation_reason && <p className="cancellation-reason">Reason: {event.cancellation_reason}</p>}<button type="button" className="attendee-stack" onClick={() => setPeopleTarget(event)} aria-label={`View ${event.attendees?.length || 0} invited people`}>{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color, full_name: person.name }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited · View people</small></button></div>
               <div className="meeting-list-actions">{!cancelled && <><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button></>}{canCancel && <button className="button button-danger button-small" onClick={() => setCancelTarget(event)}><Ban size={14} /> Cancel</button>}</div>
             </article>;
           })}
@@ -44,8 +45,60 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
       </section>
       {instantOpen && <InstantMeeting people={people.filter((person) => person.id !== user.id)} onClose={() => setInstantOpen(false)} onStart={async (details) => { await onStartMeeting(details); setInstantOpen(false); }} />}
       {cancelTarget && <CancelMeeting event={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={async (reason) => { await onCancelEvent(cancelTarget, reason); setCancelTarget(null); }} />}
+      {peopleTarget && <InvitedPeople event={events.find((event) => event.id === peopleTarget.id) || peopleTarget} people={people} canAdd={!peopleTarget.cancelled_at && (peopleTarget.organizer_id === user.id || ["hr", "senior_leader"].includes(user.role))} onClose={() => setPeopleTarget(null)} onAdd={(ids) => onAddAttendees(peopleTarget, ids)} />}
     </div>
   );
+}
+
+function InvitedPeople({ event, people, canAdd, onClose, onAdd }) {
+  const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const invitedIds = new Set((event.attendees || []).map((person) => person.id));
+  const available = people.filter((person) => !invitedIds.has(person.id) && person.employment_status !== "offboarded" && `${person.full_name} ${person.title || ""} ${person.department || ""}`.toLowerCase().includes(query.toLowerCase()));
+  const detailsFor = (attendee) => people.find((person) => person.id === attendee.id) || attendee;
+  const toggle = (id) => setSelected((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+
+  async function submit() {
+    if (!selected.length) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onAdd(selected);
+      setSelected([]);
+      setQuery("");
+      setAdding(false);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <Modal title="Invited people" subtitle={`${event.title} · ${event.attendees?.length || 0} invited`} onClose={onClose}>
+    <div className="invited-people-modal">
+      {!adding ? <>
+        <div className="invited-people-list">{(event.attendees || []).map((attendee) => {
+          const person = detailsFor(attendee);
+          return <div key={attendee.id}><Avatar person={{ ...person, full_name: attendee.name || person.full_name, avatar_color: attendee.color || person.avatar_color }} size="sm" /><span><b>{attendee.name || person.full_name}</b><small>{attendee.id === event.organizer_id ? "Organizer" : [person.title, person.department].filter(Boolean).join(" · ") || "Invited"}</small></span><Check size={16} /></div>;
+        })}</div>
+        {canAdd && <button type="button" className="button button-secondary invited-add-button" onClick={() => setAdding(true)}><UserPlus size={16} /> Add people</button>}
+      </> : <>
+        <div className="group-members-field invited-add-panel">
+          <div className="group-members-label"><span>Add people to this meeting</span><small>{selected.length} selected</small></div>
+          <label className="group-member-search"><Search size={16} /><input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search employees" /></label>
+          <div className="group-member-list meeting-attendee-list">{available.map((person) => {
+            const isSelected = selected.includes(person.id);
+            return <button type="button" className={isSelected ? "selected" : ""} onClick={() => toggle(person.id)} key={person.id}><Avatar person={person} size="xs" /><span><b>{person.full_name}</b><small>{[person.title, person.department].filter(Boolean).join(" · ")}</small></span><i>{isSelected && <Check size={14} />}</i></button>;
+          })}{!available.length && <p className="invited-empty">No more employees found.</p>}</div>
+          {error && <p className="form-error">{error}</p>}
+        </div>
+        <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={() => { setAdding(false); setSelected([]); setError(""); }}>Back</button><button type="button" className="button button-primary" disabled={!selected.length || busy} onClick={submit}><UserPlus size={16} /> {busy ? "Adding..." : `Add ${selected.length || ""} ${selected.length === 1 ? "person" : "people"}`}</button></footer>
+      </>}
+    </div>
+  </Modal>;
 }
 
 function CancelMeeting({ event, onClose, onConfirm }) {

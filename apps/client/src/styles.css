@@ -486,8 +486,21 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .agenda-time { font-size: 9px; font-weight: 700; padding-top: 2px; }
 .agenda-list h3 { font-size: 11px; margin: 0 0 7px; }
 .agenda-list p { display: flex; gap: 5px; align-items: center; color: #7c8797; font-size: 8.5px; margin: 0 0 5px; }
-.attendee-stack { display: flex; align-items: center; padding: 5px 0 9px 5px; }
+.attendee-stack { width: max-content; border: 0; background: transparent; display: flex; align-items: center; padding: 5px 0 9px 5px; cursor: pointer; }
 .attendee-stack small { margin-left: 5px; color: #8c96a5; font-size: 8px; }
+.attendee-stack:hover small { color: var(--blue); }
+.attendee-stack:focus-visible { outline: 2px solid #7898e8; outline-offset: 3px; border-radius: 5px; }
+.invited-people-modal { padding: 15px 20px 20px; }
+.invited-people-list { max-height: 360px; overflow-y: auto; display: grid; }
+.invited-people-list > div { min-height: 57px; padding: 8px 6px; border-bottom: 1px solid var(--soft-line); display: grid; grid-template-columns: 38px minmax(0, 1fr) 24px; gap: 10px; align-items: center; }
+.invited-people-list > div > span { min-width: 0; display: grid; gap: 3px; }
+.invited-people-list b { color: var(--navy); font-size: 10px; }
+.invited-people-list small { color: #8490a2; font-size: 8px; }
+.invited-people-list > div > svg { color: var(--green); }
+.invited-add-button { width: 100%; margin-top: 14px; }
+.invited-add-panel { padding: 0; }
+.invited-add-panel .meeting-attendee-list { max-height: 270px; }
+.invited-empty { margin: 0; padding: 28px 10px; color: #8792a3; text-align: center; font-size: 9px; }
 
 /* People */
 .directory-stats { display: grid; grid-template-columns: repeat(3, minmax(140px, 215px)); gap: 12px; margin-bottom: 17px; }

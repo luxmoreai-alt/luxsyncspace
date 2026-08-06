@@ -149,6 +149,16 @@ export default function App() {
     setToast(result.message);
   }
 
+  async function addMeetingAttendees(event, attendeeIds) {
+    const result = await api(`/events/${event.id}/attendees`, {
+      method: "POST",
+      body: JSON.stringify({ attendeeIds })
+    });
+    await refreshWorkspace();
+    setToast(result.message);
+    return result;
+  }
+
   const refreshWorkspace = useCallback(async () => {
     const workspace = await api("/bootstrap");
     setData(workspace);
@@ -274,7 +284,7 @@ export default function App() {
       <Shell user={user} active={active} setActive={navigate} onLogout={logout} onStatusChange={changeAvailabilityStatus} notifications={notifications} unreadChatCount={data.channels.reduce((total, channel) => total + (channel.unread_count || 0), 0) + Object.values(data.directUnreadCounts || {}).reduce((total, count) => total + count, 0)} onNotificationsRead={() => setNotifications((current) => current.map((item) => ({ ...item, unread: false })))} onNotificationOpen={openNotification}>
         {active === "home" && <Home {...pageProps} />}
         {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} directUnreadCounts={data.directUnreadCounts || {}} onConversationRead={markConversationRead} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={new URLSearchParams(window.location.search).get("channel")} onStartCall={startCall} />}
-        {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={() => setNewEvent(true)} onCancelEvent={cancelEvent} onToast={setToast} />}
+        {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={() => setNewEvent(true)} onCancelEvent={cancelEvent} onAddAttendees={addMeetingAttendees} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={() => setNewEvent(true)} onJoinMeeting={joinMeeting} />}
         {active === "people" && <People user={user} people={data.workforce || data.people} onStartChat={() => navigate("chat")} onInvite={() => navigate("settings")} onManage={() => navigate("settings")} onRefresh={refreshWorkspace} onToast={setToast} />}
         {active === "settings" && <Settings user={user} people={data.workforce || data.people} onToast={setToast} onRefresh={refreshWorkspace} onUserUpdate={(changes) => setUser((current) => ({ ...current, ...changes }))} onStartTutorial={() => setTutorialOpen(true)} />}
