@@ -31,10 +31,26 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                   const start = new Date(event.starts_at); const end = new Date(event.ends_at);
                   const top = ((start.getHours() - 8) * 60 + start.getMinutes()) / 60 * 64;
                   const height = Math.max(42, (end - start) / 3600000 * 64);
-                  return <button className="calendar-event" onClick={() => onJoinMeeting(event)} key={event.id} style={{ top, height, "--event": event.color }}><b>{event.title}</b><small>{eventTime(event.starts_at)}</small></button>;
+                  return <button className={`calendar-event ${event.cancelled_at ? "cancelled" : ""}`} disabled={Boolean(event.cancelled_at)} onClick={() => onJoinMeeting(event)} key={event.id} style={{ top, height, "--event": event.color }}><b>{event.cancelled_at ? `Cancelled: ${event.title}` : event.title}</b><small>{event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : eventTime(event.starts_at)}</small></button>;
                 })}
               </div>
             ))}
+          </div>
+          <div className="mobile-calendar-days">
+            {days.map((day) => {
+              const dayEvents = events.filter((event) => isSameDay(new Date(event.starts_at), day));
+              return <section className={isSameDay(day, new Date()) ? "today" : ""} key={day.toISOString()}>
+                <header><span>{format(day, "EEE")}</span><b>{format(day, "d")}</b><small>{format(day, "MMMM")}</small></header>
+                <div>
+                  {dayEvents.map((event) => <button className={event.cancelled_at ? "cancelled" : ""} disabled={Boolean(event.cancelled_at)} onClick={() => onJoinMeeting(event)} key={event.id} style={{ "--event": event.color }}>
+                    <time>{eventTime(event.starts_at)}</time>
+                    <span><b>{event.cancelled_at ? `Cancelled: ${event.title}` : event.title}</b><small>{event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.location || (event.is_online ? "LuxSyncspace meeting" : "No location")}</small></span>
+                    {event.cancelled_at ? <span className="calendar-cancelled-mark">×</span> : event.is_online && <Video size={17} />}
+                  </button>)}
+                  {!dayEvents.length && <p>No events scheduled</p>}
+                </div>
+              </section>;
+            })}
           </div>
         </section>
         <aside className="agenda-panel panel">

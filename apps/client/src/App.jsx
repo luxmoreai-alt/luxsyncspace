@@ -15,16 +15,19 @@ import { NewEvent } from "./components/NewEvent";
 import { Toast } from "./components/Toast";
 import { Meetings } from "./pages/Meetings";
 import { IncomingCall } from "./components/IncomingCall";
+import { InAppNotification } from "./components/InAppNotification";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [data, setData] = useState({ people: [], channels: [], events: [], announcements: [] });
   const [active, setActive] = useState(() => new URLSearchParams(window.location.search).get("channel") ? "chat" : "home");
   const [meetingId, setMeetingId] = useState(() => new URLSearchParams(window.location.search).get("meeting"));
+  const [activeMeeting, setActiveMeeting] = useState(null);
   const [loading, setLoading] = useState(Boolean(authStore.get()));
   const [newEvent, setNewEvent] = useState(false);
   const [toast, setToast] = useState("");
   const [incomingCall, setIncomingCall] = useState(null);
+  const [notification, setNotification] = useState(null);
 
   useEffect(() => {
     if (!authStore.get()) return;
@@ -39,6 +42,12 @@ export default function App() {
     const timer = setTimeout(() => setToast(""), 3500);
     return () => clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    if (!notification) return;
+    const timer = setTimeout(() => setNotification(null), 5200);
+    return () => clearTimeout(timer);
+  }, [notification]);
 
   useEffect(() => {
     const handleUnauthorized = () => {
@@ -73,6 +82,15 @@ export default function App() {
     setToast("Event added to your calendar");
   }
 
+  async function cancelEvent(event, reason = "") {
+    const result = await api(`/events/${event.id}`, {
+      method: "DELETE",
+      body: JSON.stringify({ reason })
+    });
+    await refreshWorkspace();
+    setToast(result.message);
+  }
+
   const refreshWorkspace = useCallback(async () => {
     const workspace = await api("/bootstrap");
     setData(workspace);
@@ -84,6 +102,7 @@ export default function App() {
     url.searchParams.delete("channel");
     url.searchParams.set("meeting", event.id);
     window.history.pushState({}, "", url);
+    setActiveMeeting(event);
     setMeetingId(event.id);
   }
 
@@ -92,6 +111,7 @@ export default function App() {
     url.searchParams.delete("meeting");
     window.history.pushState({}, "", url);
     setMeetingId(null);
+    setActiveMeeting(null);
     refreshWorkspace().catch(() => {});
   }
 
@@ -124,7 +144,7 @@ export default function App() {
   if (!user) return <Login onLogin={login} />;
   if (user.must_change_password) return <ChangePassword user={user} onLogout={logout} onChanged={() => { setUser((current) => ({ ...current, must_change_password: false })); setToast("Password updated successfully"); }} />;
   if (meetingId) {
-    const meeting = data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting" };
+    const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
     return <><MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onToast={setToast} /><Toast message={toast} onClose={() => setToast("")} /></>;
   }
 
@@ -134,15 +154,16 @@ export default function App() {
       <Shell user={user} active={active} setActive={setActive} onLogout={logout}>
         {active === "home" && <Home {...pageProps} />}
         {active === "chat" && <Chat user={user} channels={data.channels} people={data.people} onRefresh={refreshWorkspace} onToast={setToast} initialChannelId={new URLSearchParams(window.location.search).get("channel")} onStartCall={startCall} />}
-        {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={() => setNewEvent(true)} onToast={setToast} />}
+        {active === "meetings" && <Meetings user={user} events={data.events} people={data.people} onJoinMeeting={joinMeeting} onStartMeeting={startInstantMeeting} onScheduleMeeting={() => setNewEvent(true)} onCancelEvent={cancelEvent} onToast={setToast} />}
         {active === "calendar" && <Calendar events={data.events} onNewEvent={() => setNewEvent(true)} onJoinMeeting={joinMeeting} />}
         {active === "people" && <People user={user} people={data.people} onStartChat={() => setActive("chat")} onInvite={() => setActive("settings")} />}
         {active === "settings" && <Settings user={user} people={data.people} onToast={setToast} onRefresh={refreshWorkspace} />}
         {active === "help" && <HelpSupport user={user} onToast={setToast} />}
         {!["home", "chat", "meetings", "calendar", "people", "settings", "help"].includes(active) && <Home {...pageProps} />}
       </Shell>
-      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} />
+      <NotificationBridge user={user} channels={data.channels} onRefresh={refreshWorkspace} onIncomingCall={setIncomingCall} onNotification={setNotification} />
       <IncomingCall call={incomingCall} onDecline={() => setIncomingCall(null)} onAccept={() => { const call = incomingCall; setIncomingCall(null); joinMeeting(call.meeting); }} />
+      <InAppNotification notification={notification} onClose={() => setNotification(null)} />
       {newEvent && <NewEvent people={data.people.filter((p) => p.id !== user.id)} onSave={saveEvent} onClose={() => setNewEvent(false)} />}
       <Toast message={toast} onClose={() => setToast("")} />
     </>

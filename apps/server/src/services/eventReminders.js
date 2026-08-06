@@ -12,6 +12,7 @@ export function startEventReminderScheduler(io) {
         UPDATE events
         SET reminder_sent_at = NOW()
         WHERE reminder_sent_at IS NULL
+          AND cancelled_at IS NULL
           AND starts_at > NOW()
           AND starts_at <= NOW() + INTERVAL '30 minutes'
         RETURNING id, title, location, starts_at

@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, Users, Video } from "lucide-react";
+import { Ban, CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, Users, Video } from "lucide-react";
 import { format } from "date-fns";
 import { Avatar } from "../components/Avatar";
 import { Modal } from "../components/Modal";
 
-export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onToast }) {
+export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onCancelEvent, onToast }) {
   const [instantOpen, setInstantOpen] = useState(false);
-  const upcoming = events.filter((event) => new Date(event.ends_at) > new Date());
+  const [cancelTarget, setCancelTarget] = useState(null);
+  const scheduled = events.filter((event) => new Date(event.ends_at) > new Date());
+  const upcoming = scheduled.filter((event) => !event.cancelled_at);
 
   function copyLink(event) {
     const url = new URL(window.location.href);
@@ -28,17 +30,42 @@ export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, 
       <section className="panel meetings-list-panel">
         <header className="panel-header"><div><h2>Scheduled meetings</h2><p>Internal rooms and invitations from your workspace calendar</p></div></header>
         <div className="meetings-list">
-          {upcoming.map((event) => <article key={event.id}>
-            <div className="meeting-date"><b>{format(new Date(event.starts_at), "d")}</b><small>{format(new Date(event.starts_at), "MMM")}</small></div>
-            <div className="meeting-list-main"><span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span><h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p><div className="attendee-stack">{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited</small></div></div>
-            <div className="meeting-list-actions"><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button></div>
-          </article>)}
-          {!upcoming.length && <div className="empty-state"><CalendarClock size={30} /><h3>No scheduled meetings</h3><p>Schedule a meeting or start an instant room.</p></div>}
+          {scheduled.map((event) => {
+            const cancelled = Boolean(event.cancelled_at);
+            const canCancel = !cancelled && (event.organizer_id === user.id || ["hr", "senior_leader"].includes(user.role));
+            return <article className={cancelled ? "cancelled" : ""} key={event.id}>
+              <div className="meeting-date"><b>{format(new Date(event.starts_at), "d")}</b><small>{format(new Date(event.starts_at), "MMM")}</small></div>
+              <div className="meeting-list-main">{cancelled ? <span className="meeting-cancelled-chip"><Ban size={13} /> Cancelled</span> : <span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span>}<h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p>{cancelled && event.cancellation_reason && <p className="cancellation-reason">Reason: {event.cancellation_reason}</p>}<div className="attendee-stack">{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited</small></div></div>
+              <div className="meeting-list-actions">{!cancelled && <><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button></>}{canCancel && <button className="button button-danger button-small" onClick={() => setCancelTarget(event)}><Ban size={14} /> Cancel</button>}</div>
+            </article>;
+          })}
+          {!scheduled.length && <div className="empty-state"><CalendarClock size={30} /><h3>No scheduled meetings</h3><p>Schedule a meeting or start an instant room.</p></div>}
         </div>
       </section>
       {instantOpen && <InstantMeeting people={people.filter((person) => person.id !== user.id)} onClose={() => setInstantOpen(false)} onStart={async (details) => { await onStartMeeting(details); setInstantOpen(false); }} />}
+      {cancelTarget && <CancelMeeting event={cancelTarget} onClose={() => setCancelTarget(null)} onConfirm={async (reason) => { await onCancelEvent(cancelTarget, reason); setCancelTarget(null); }} />}
     </div>
   );
+}
+
+function CancelMeeting({ event, onClose, onConfirm }) {
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
+  async function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    try { await onConfirm(reason); }
+    finally { setBusy(false); }
+  }
+  return <Modal title="Cancel event or meeting" subtitle={event.title} onClose={onClose}>
+    <form className="cancel-meeting-form" onSubmit={submit}>
+      <span className="cancel-meeting-icon"><Ban size={25} /></span>
+      <h3>Notify all invited employees?</h3>
+      <p>The event will remain in everyone’s calendar marked as cancelled. Invited employees will receive an in-app and push notification.</p>
+      <label><span>Cancellation reason (optional)</span><textarea value={reason} onChange={(e) => setReason(e.target.value)} maxLength={500} placeholder="For example: Rescheduled to a later date" /></label>
+      <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Keep event</button><button className="button button-danger" disabled={busy}><Ban size={16} /> {busy ? "Cancelling..." : "Cancel and notify"}</button></footer>
+    </form>
+  </Modal>;
 }
 
 function InstantMeeting({ people, onStart, onClose }) {

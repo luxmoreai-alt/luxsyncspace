@@ -587,6 +587,73 @@ workspaceRouter.post("/meetings/instant", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
+  try {
+    const eventId = z.string().uuid().parse(req.params.eventId);
+    const input = z.object({ reason: z.string().trim().max(500).default("") }).parse(req.body || {});
+    const [event] = await sql`
+      SELECT e.*, u.full_name AS organizer_name
+      FROM events e JOIN users u ON u.id = e.organizer_id
+      WHERE e.id = ${eventId} AND e.organization_id = ${req.auth.organizationId}
+    `;
+    if (!event) return res.status(404).json({ error: "Event or meeting not found" });
+    const role = await currentRole(req.auth.userId);
+    const canCancel = event.organizer_id === req.auth.userId || ["hr", "senior_leader"].includes(role);
+    if (!canCancel) return res.status(403).json({ error: "Only the organizer, HR, or a senior leader can cancel this event" });
+    if (event.cancelled_at) return res.json({ event, message: "This event is already cancelled" });
+
+    const [cancelled] = await sql`
+      UPDATE events
+      SET cancelled_at = NOW(), cancelled_by = ${req.auth.userId}, cancellation_reason = ${input.reason}
+      WHERE id = ${eventId}
+      RETURNING *
+    `;
+    const attendees = await sql`
+      SELECT ea.user_id FROM event_attendees ea
+      WHERE ea.event_id = ${eventId} AND ea.user_id <> ${req.auth.userId}
+    `;
+    const [cancelledBy] = await sql`SELECT full_name, initials, avatar_color FROM users WHERE id = ${req.auth.userId}`;
+    const title = `Cancelled: ${event.title}`;
+    const body = `${cancelledBy.full_name} cancelled this ${event.is_online ? "meeting" : "event"}${input.reason ? `. Reason: ${input.reason}` : "."}`;
+    const recipientIds = attendees.map((attendee) => attendee.user_id);
+    if (recipientIds.length) {
+      const cancellationMessages = await sql`
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        SELECT ${req.auth.organizationId}, ${req.auth.userId}, recipient_id,
+          ${`Meeting cancelled: ${event.title}${input.reason ? `\nReason: ${input.reason}` : ""}`}
+        FROM unnest(${recipientIds}::uuid[]) AS recipient_id
+        RETURNING id, recipient_id, body, sent_at
+      `;
+      for (const message of cancellationMessages) {
+        req.app.get("io")?.to(`user:${message.recipient_id}`).emit("direct:message", {
+          ...message,
+          sender_id: req.auth.userId,
+          sender_name: cancelledBy.full_name,
+          initials: cancelledBy.initials,
+          avatar_color: cancelledBy.avatar_color
+        });
+      }
+    }
+    for (const attendee of attendees) {
+      req.app.get("io")?.to(`user:${attendee.user_id}`).emit("event:cancelled", {
+        event_id: eventId,
+        title,
+        body,
+        tag: `event-cancelled-${eventId}`
+      });
+      sendPushToUser(attendee.user_id, {
+        title,
+        body,
+        tag: `event-cancelled-${eventId}`,
+        url: "/?view=calendar"
+      }).catch(console.error);
+    }
+    req.app.get("io")?.to(`meeting:${eventId}`).emit("meeting:cancelled", { title, body });
+    invalidateCache(`events:${req.auth.organizationId}`);
+    res.json({ event: cancelled, message: "Event cancelled and attendees notified" });
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.get("/meetings/config", (_req, res) => {
   res.json({ iceServers: config.webrtcIceServers });
 });

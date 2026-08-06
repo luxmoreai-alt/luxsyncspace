@@ -95,7 +95,8 @@ io.on("connection", (socket) => {
     try {
       const [meeting] = await sql`
         SELECT id, title, starts_at, ends_at
-        FROM events WHERE id = ${roomId} AND organization_id = ${socket.auth.organizationId} AND is_online = TRUE
+        FROM events WHERE id = ${roomId} AND organization_id = ${socket.auth.organizationId}
+          AND is_online = TRUE AND cancelled_at IS NULL
       `;
       if (!meeting) return acknowledge({ ok: false, error: "Meeting not found or access denied" });
       const [profile] = await sql`

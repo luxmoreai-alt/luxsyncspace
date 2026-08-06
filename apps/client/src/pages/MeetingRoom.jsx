@@ -132,6 +132,10 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
       });
       socket.on("meeting:chat", (incoming) => setChat((current) => [...current, incoming]));
       socket.on("meeting:hand", ({ socketId, raised: isRaised }) => upsertParticipant(socketId, { raised: isRaised }));
+      socket.on("meeting:cancelled", ({ body }) => {
+        onToast(body || "This meeting was cancelled by the organizer.");
+        window.setTimeout(onLeave, 1800);
+      });
       socket.on("connect", () => {
         setStatus("Connecting securely...");
         socket.emit("meeting:join", { roomId: meeting.id }, async (response) => {
@@ -254,13 +258,14 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
           <MeetingControl active={!micOn} onClick={toggleMic} icon={micOn ? Mic : MicOff} label={micOn ? "Mute" : "Unmute"} />
           {isAudioOnly && <MeetingControl active={!speakerOn} onClick={() => setSpeakerOn((enabled) => !enabled)} icon={speakerOn ? Volume2 : VolumeX} label={speakerOn ? "Speaker" : "Sound off"} />}
           {!isAudioOnly && <MeetingControl active={!cameraOn} onClick={toggleCamera} icon={cameraOn ? Video : VideoOff} label={cameraOn ? "Camera" : "Start video"} />}
+          <button className="mobile-leave" onClick={onLeave}><span><PhoneOff size={20} /></span><small>End</small></button>
           {!isAudioOnly && <MeetingControl active={screenOn} onClick={shareScreen} icon={MonitorUp} label={screenOn ? "Stop sharing" : "Share screen"} />}
           <MeetingControl active={raised} onClick={toggleHand} icon={Hand} label={raised ? "Lower hand" : "Raise hand"} />
           <MeetingControl active={panel === "chat"} onClick={() => setPanel(panel === "chat" ? null : "chat")} icon={MessageSquareText} label="Chat" />
           <MeetingControl active={panel === "people"} onClick={() => setPanel(panel === "people" ? null : "people")} icon={Users} label="People" />
           <MeetingControl onClick={() => document.documentElement.requestFullscreen?.()} icon={Expand} label="Full screen" />
         </div>
-        <button className="leave-meeting" onClick={onLeave}><PhoneOff size={20} /><span>Leave</span></button>
+        <button className="leave-meeting desktop-leave" onClick={onLeave}><PhoneOff size={20} /><span>Leave</span></button>
       </footer>
     </div>
   );

@@ -90,7 +90,7 @@ export function Shell({ user, active, setActive, children, onLogout }) {
         </header>
         <main className="workspace">{children}</main>
         <nav className="mobile-bottom-nav" aria-label="Mobile navigation">
-          {[...nav, ["settings", "More", Settings]].map(([id, label, Icon]) => (
+          {[...nav, ["settings", "Settings", Settings]].map(([id, label, Icon]) => (
             <button className={active === id ? "active" : ""} onClick={() => navigate(id)} key={id}><Icon size={20} /><span>{label}</span></button>
           ))}
         </nav>

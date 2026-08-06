@@ -89,7 +89,8 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   }, [selectedPerson]);
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    const compact = window.matchMedia("(max-width: 700px)").matches;
+    endRef.current?.scrollIntoView({ behavior: compact ? "auto" : "smooth" });
   }, [messages]);
 
   async function send(event) {
@@ -265,7 +266,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
               {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
-              <button className="icon-button"><Bell size={19} /></button><button className="icon-button"><Info size={19} /></button>
+              <button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Bell size={19} /></button><button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Info size={19} /></button>
             </div>
           </header>
           {selected && messageSearchOpen && <div className="conversation-search">
@@ -278,9 +279,10 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
             <div className="date-divider"><span>Today</span></div>
             {visibleMessages.map((item, index) => {
               const grouped = index > 0 && visibleMessages[index - 1].sender_id === item.sender_id && new Date(item.sent_at) - new Date(visibleMessages[index - 1].sent_at) < 300000;
-              return <div className={`chat-message ${grouped ? "grouped" : ""}`} key={item.id}>
+              const mine = item.sender_id === user.id;
+              return <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`} key={item.id}>
                 {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
-                <div>{!grouped && <header><b>{item.sender_name}</b><time>{eventTime(item.sent_at)}</time></header>}
+                <div><header>{!grouped && <b>{item.sender_name}</b>}<time>{eventTime(item.sent_at)}</time></header>
                   {item.body && <MessageBody body={item.body} />}
                   {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
                     <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />
