@@ -7,7 +7,22 @@ import { io } from "socket.io-client";
 import { api, SOCKET_URL, socketOptions } from "../lib/api";
 import { Modal } from "../components/Modal";
 
-const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
+const DEFAULT_ICE_SERVERS = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" }
+];
+const AUDIO_CONSTRAINTS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+  sampleRate: { ideal: 48000 }
+};
+const VIDEO_CONSTRAINTS = {
+  width: { ideal: 640, max: 960 },
+  height: { ideal: 360, max: 540 },
+  frameRate: { ideal: 15, max: 20 }
+};
 
 export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
@@ -33,6 +48,8 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
   const socketRef = useRef();
   const panelRef = useRef(null);
   const peersRef = useRef(new Map());
+  const pendingCandidatesRef = useRef(new Map());
+  const reconnectTimersRef = useRef(new Map());
   const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
 
   useEffect(() => { panelRef.current = panel; }, [panel]);
@@ -64,22 +81,105 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
     }
 
     function removeParticipant(socketId) {
+      window.clearTimeout(reconnectTimersRef.current.get(socketId));
+      reconnectTimersRef.current.delete(socketId);
+      pendingCandidatesRef.current.delete(socketId);
       peersRef.current.get(socketId)?.close();
       peersRef.current.delete(socketId);
       setParticipants((current) => current.filter((participant) => participant.socketId !== socketId));
     }
 
-    function createPeer(socketId, participantUser) {
-      if (peersRef.current.has(socketId)) return peersRef.current.get(socketId);
-      const peer = new RTCPeerConnection({ iceServers: iceServersRef.current });
+    async function tuneSender(sender) {
+      if (!sender.track) return;
+      sender.track.contentHint = sender.track.kind === "audio" ? "speech" : "motion";
+      try {
+        const parameters = sender.getParameters();
+        if (!parameters.encodings?.length) parameters.encodings = [{}];
+        if (sender.track.kind === "audio") {
+          parameters.encodings[0].maxBitrate = 96000;
+          parameters.encodings[0].priority = "high";
+          parameters.degradationPreference = "maintain-framerate";
+        } else {
+          const remoteCount = Math.max(1, peersRef.current.size);
+          parameters.encodings[0].maxBitrate = Math.max(180000, Math.floor(900000 / remoteCount));
+          parameters.encodings[0].maxFramerate = remoteCount >= 5 ? 12 : 18;
+          parameters.encodings[0].scaleResolutionDownBy = remoteCount >= 7 ? 2 : remoteCount >= 4 ? 1.5 : 1;
+          parameters.encodings[0].priority = "low";
+          parameters.degradationPreference = "maintain-framerate";
+        }
+        await sender.setParameters(parameters);
+      } catch {
+        // Some browsers apply their own sender limits and reject these hints.
+      }
+    }
+
+    function tuneAllSenders() {
+      peersRef.current.forEach((peer) => peer.getSenders().forEach(tuneSender));
+    }
+
+    async function flushCandidates(socketId, peer) {
+      const candidates = pendingCandidatesRef.current.get(socketId) || [];
+      pendingCandidatesRef.current.delete(socketId);
+      for (const candidate of candidates) {
+        try { await peer.addIceCandidate(candidate); }
+        catch (error) { console.warn("Could not apply a queued meeting candidate", error); }
+      }
+    }
+
+    async function sendOffer(socketId, peer, restart = false) {
+      if (peer.signalingState !== "stable") return;
+      const offer = await peer.createOffer({ iceRestart: restart });
+      await peer.setLocalDescription(offer);
+      peer.getSenders().forEach(tuneSender);
+      socketRef.current?.emit("meeting:signal", { target: socketId, signal: { offer: peer.localDescription } });
+    }
+
+    function scheduleReconnect(socketId, peer) {
+      if (!peer._luxInitiator || reconnectTimersRef.current.has(socketId)) return;
+      const timer = window.setTimeout(async () => {
+        reconnectTimersRef.current.delete(socketId);
+        if (!["disconnected", "failed"].includes(peer.connectionState)) return;
+        try {
+          setStatus("Restoring media connection...");
+          peer.restartIce?.();
+          await sendOffer(socketId, peer, true);
+          if (["disconnected", "failed"].includes(peer.connectionState)) scheduleReconnect(socketId, peer);
+        } catch (error) {
+          console.warn("Meeting media reconnect failed", error);
+          scheduleReconnect(socketId, peer);
+        }
+      }, peer.connectionState === "failed" ? 500 : 3500);
+      reconnectTimersRef.current.set(socketId, timer);
+    }
+
+    function createPeer(socketId, participantUser, initiator = false) {
+      if (peersRef.current.has(socketId)) {
+        const existing = peersRef.current.get(socketId);
+        existing._luxInitiator ||= initiator;
+        return existing;
+      }
+      const peer = new RTCPeerConnection({ iceServers: iceServersRef.current, iceCandidatePoolSize: 10 });
+      peer._luxInitiator = initiator;
       peersRef.current.set(socketId, peer);
-      localStreamRef.current?.getTracks().forEach((track) => peer.addTrack(track, localStreamRef.current));
+      localStreamRef.current?.getTracks().forEach((track) => {
+        const sender = peer.addTrack(track, localStreamRef.current);
+        tuneSender(sender);
+      });
+      tuneAllSenders();
       peer.onicecandidate = (event) => {
         if (event.candidate) socketRef.current?.emit("meeting:signal", { target: socketId, signal: { candidate: event.candidate } });
       };
-      peer.ontrack = (event) => upsertParticipant(socketId, { user: participantUser, stream: event.streams[0] });
+      peer.ontrack = (event) => upsertParticipant(socketId, { user: participantUser, stream: event.streams[0], connectionState: "connected" });
       peer.onconnectionstatechange = () => {
-        if (["failed", "closed"].includes(peer.connectionState)) removeParticipant(socketId);
+        if (peer.connectionState === "connected") {
+          window.clearTimeout(reconnectTimersRef.current.get(socketId));
+          reconnectTimersRef.current.delete(socketId);
+          upsertParticipant(socketId, { connectionState: "connected" });
+          setStatus("Connected");
+        } else if (["disconnected", "failed"].includes(peer.connectionState)) {
+          upsertParticipant(socketId, { connectionState: "reconnecting" });
+          scheduleReconnect(socketId, peer);
+        }
       };
       return peer;
     }
@@ -93,10 +193,10 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
       }
       let stream = null;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: !isAudioOnly });
+        stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: isAudioOnly ? false : VIDEO_CONSTRAINTS });
       } catch {
         try {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          stream = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS, video: false });
           setCameraOn(false);
           onToast("Camera unavailable. Joined with microphone only.");
         } catch {
@@ -110,6 +210,7 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
         return;
       }
       localStreamRef.current = stream;
+      stream?.getAudioTracks().forEach((track) => { track.contentHint = "speech"; });
       setLocalStream(stream);
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
@@ -118,6 +219,9 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
       socket.on("connect_error", () => setStatus("Realtime connection unavailable. Retrying..."));
       socket.on("disconnect", () => {
         setStatus("Reconnecting securely...");
+        reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+        reconnectTimersRef.current.clear();
+        pendingCandidatesRef.current.clear();
         peersRef.current.forEach((peer) => peer.close());
         peersRef.current.clear();
         setParticipants([]);
@@ -132,13 +236,17 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
           upsertParticipant(from, { user: participantUser });
           if (signal.offer) {
             await peer.setRemoteDescription(signal.offer);
+            await flushCandidates(from, peer);
             const answer = await peer.createAnswer();
             await peer.setLocalDescription(answer);
+            peer.getSenders().forEach(tuneSender);
             socket.emit("meeting:signal", { target: from, signal: { answer: peer.localDescription } });
           } else if (signal.answer) {
             await peer.setRemoteDescription(signal.answer);
+            await flushCandidates(from, peer);
           } else if (signal.candidate) {
-            await peer.addIceCandidate(signal.candidate);
+            if (peer.remoteDescription) await peer.addIceCandidate(signal.candidate);
+            else pendingCandidatesRef.current.set(from, [...(pendingCandidatesRef.current.get(from) || []), signal.candidate]);
           }
         } catch (error) {
           console.error("Meeting signal failed", error);
@@ -167,10 +275,8 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
           setStatus("Connected");
           for (const participant of response.participants) {
             upsertParticipant(participant.socketId, { user: participant.user });
-            const peer = createPeer(participant.socketId, participant.user);
-            const offer = await peer.createOffer();
-            await peer.setLocalDescription(offer);
-            socket.emit("meeting:signal", { target: participant.socketId, signal: { offer: peer.localDescription } });
+            const peer = createPeer(participant.socketId, participant.user, true);
+            await sendOffer(participant.socketId, peer);
           }
         });
       });
@@ -183,6 +289,9 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
       socketRef.current?.disconnect();
       peersRef.current.forEach((peer) => peer.close());
       peersRef.current.clear();
+      reconnectTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+      reconnectTimersRef.current.clear();
+      pendingCandidatesRef.current.clear();
       localStreamRef.current?.getTracks().forEach((track) => track.stop());
     };
   }, [meeting.id, user.id]);

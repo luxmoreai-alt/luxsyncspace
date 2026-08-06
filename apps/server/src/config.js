@@ -3,11 +3,15 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 function parseIceServers(value) {
+  const defaults = [
+    { urls: "stun:stun.l.google.com:19302" },
+    { urls: "stun:stun1.l.google.com:19302" }
+  ];
   try {
     const parsed = JSON.parse(value || "[]");
-    return Array.isArray(parsed) && parsed.length ? parsed : [{ urls: "stun:stun.l.google.com:19302" }];
+    return Array.isArray(parsed) && parsed.length ? parsed : defaults;
   } catch {
-    return [{ urls: "stun:stun.l.google.com:19302" }];
+    return defaults;
   }
 }
 
