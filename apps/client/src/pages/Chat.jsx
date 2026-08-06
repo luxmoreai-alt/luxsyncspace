@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bell, BriefcaseBusiness, Check, ChevronDown, Download, FileText, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { ArrowLeft, Bell, BriefcaseBusiness, Check, ChevronDown, ChevronRight, Download, FileText, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -249,6 +249,19 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
 
       {!selected && !selectedPerson ? (
         <section className="employee-chat-hub">
+          <section className="mobile-channel-browser" aria-labelledby="mobile-channels-title">
+            <header>
+              <div><span className="eyebrow">GROUPS &amp; CHANNELS</span><h2 id="mobile-channels-title">Channels</h2></div>
+              {canCreateGroup && <button className="icon-button" onClick={() => setCreateGroup(true)} title="Create group" aria-label="Create group"><Plus size={20} /></button>}
+            </header>
+            <nav>
+              {channels.map((channel) => <button key={channel.id} onClick={() => { setSelected(channel.id); setSelectedPerson(null); }}>
+                <span className="mobile-channel-icon">{channel.is_private ? <Lock size={18} /> : <Hash size={20} />}</span>
+                <span><b>{channel.name}</b><small>{channel.description || (channel.is_private ? "Private channel" : "Channel")}</small></span>
+                <ChevronRight size={18} />
+              </button>)}
+            </nav>
+          </section>
           <header className="employee-hub-head"><div><span className="eyebrow">COMPANY DIRECTORY</span><h1>Start a conversation</h1><p>Everyone who joined your workspace through an approved invitation appears here.</p></div>{canCreateGroup && <button className="button button-primary" onClick={() => setCreateGroup(true)}><UserPlus size={17} /> Create group</button>}</header>
           <label className="employee-hub-search"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees by name, ID, designation, or department" /></label>
           <div className="employee-chat-grid">
@@ -262,7 +275,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
       ) : (
         <section className={`conversation ${selectedPerson ? "direct-conversation" : ""}`}>
           <header className="conversation-header">
-            <div>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p></span></div>
+            <div><button className="mobile-conversation-back" onClick={() => { setSelected(null); setSelectedPerson(null); }} title="Back to chats" aria-label="Back to chats"><ArrowLeft size={21} /></button>{selectedPerson ? <Avatar person={selectedPerson} showPresence /> : <span className="channel-icon"><Hash size={19} /></span>}<span><h2>{selectedPerson?.full_name || activeChannel?.name}</h2><p>{selectedPerson ? `${selectedPerson.title} · ${selectedPerson.department}` : activeChannel?.description}</p></span></div>
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
               {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
