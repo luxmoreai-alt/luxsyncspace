@@ -85,9 +85,9 @@ workspaceRouter.get("/attachments/:id", async (req, res, next) => {
 workspaceRouter.get("/bootstrap", async (req, res, next) => {
   try {
     const { userId, organizationId } = req.auth;
-    const [people, channels, events, announcements] = await Promise.all([
+    const [people, channels, events, announcements, channelUnreadRows, directUnreadRows] = await Promise.all([
       cached(`people:${organizationId}`, 30_000, () => sql`SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
-             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, m.full_name AS manager_name
+             u.bio, u.joined_at, u.manager_id, u.initials, u.avatar_color, u.presence, u.availability_status, m.full_name AS manager_name
           FROM users u LEFT JOIN users m ON m.id = u.manager_id
           WHERE u.organization_id = ${organizationId} ORDER BY u.full_name`),
       cached(`channel-memberships:${organizationId}`, 10_000, () => sql`
@@ -118,9 +118,28 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
              u.full_name AS author_name, u.initials AS author_initials, u.avatar_color AS author_color
           FROM announcements a JOIN users u ON u.id = a.author_id
           WHERE a.organization_id = ${organizationId}
-          ORDER BY a.published_at DESC LIMIT 20`)
+          ORDER BY a.published_at DESC LIMIT 20`),
+      sql`SELECT member.channel_id, COUNT(message.id)::int AS unread_count
+          FROM channel_members member
+          LEFT JOIN channel_messages message ON message.channel_id = member.channel_id
+            AND message.sender_id <> ${userId}
+            AND message.deleted_at IS NULL
+            AND (member.last_read_at IS NULL OR message.sent_at > member.last_read_at)
+          WHERE member.user_id = ${userId}
+          GROUP BY member.channel_id`,
+      sql`SELECT sender_id, COUNT(*)::int AS unread_count
+          FROM direct_messages
+          WHERE recipient_id = ${userId} AND read_at IS NULL
+          GROUP BY sender_id`
     ]);
-    res.json({ people, channels, events, announcements });
+    const channelUnread = new Map(channelUnreadRows.map((row) => [row.channel_id, row.unread_count]));
+    res.json({
+      people,
+      channels: channels.map((channel) => ({ ...channel, unread_count: channelUnread.get(channel.id) || 0 })),
+      events,
+      announcements,
+      directUnreadCounts: Object.fromEntries(directUnreadRows.map((row) => [row.sender_id, row.unread_count]))
+    });
   } catch (error) {
     next(error);
   }
@@ -129,6 +148,23 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
 const groupRoles = new Set(["hr", "senior_leader", "manager", "team_lead"]);
 const announcementRoles = new Set(["hr", "senior_leader"]);
 const inviteRoles = new Set(["hr", "senior_leader", "manager"]);
+
+workspaceRouter.patch("/presence", async (req, res, next) => {
+  try {
+    const { status } = z.object({
+      status: z.enum(["online", "break", "lunch", "unavailable", "meeting", "offline"])
+    }).parse(req.body);
+    const legacyPresence = status === "online" ? "online" : status === "offline" ? "offline" : status === "unavailable" ? "busy" : "away";
+    const [updated] = await sql`
+      UPDATE users SET availability_status = ${status}, presence = ${legacyPresence}
+      WHERE id = ${req.auth.userId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id, presence, availability_status
+    `;
+    invalidateCache(`people:${req.auth.organizationId}`);
+    req.app.get("io")?.to(`org:${req.auth.organizationId}`).emit("presence:updated", updated);
+    res.json(updated);
+  } catch (error) { next(error); }
+});
 
 async function markChannelRead(req, channelId) {
   const [receipt] = await sql`
@@ -745,6 +781,13 @@ workspaceRouter.get("/direct/:userId", async (req, res, next) => {
   try {
     const [colleague] = await sql`SELECT id FROM users WHERE id = ${req.params.userId} AND organization_id = ${req.auth.organizationId}`;
     if (!colleague) return res.status(404).json({ error: "Employee not found" });
+    await sql`
+      UPDATE direct_messages SET read_at = NOW()
+      WHERE organization_id = ${req.auth.organizationId}
+        AND sender_id = ${req.params.userId}
+        AND recipient_id = ${req.auth.userId}
+        AND read_at IS NULL
+    `;
     const messages = await sql`
       SELECT dm.id, dm.body, dm.sent_at, u.id AS sender_id, u.full_name AS sender_name, u.initials, u.avatar_color,
              a.id AS attachment_id, a.file_name, a.mime_type, a.file_size
@@ -756,6 +799,20 @@ workspaceRouter.get("/direct/:userId", async (req, res, next) => {
       ORDER BY dm.sent_at ASC LIMIT 300
     `;
     res.json({ messages });
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/direct/:userId/read", async (req, res, next) => {
+  try {
+    const result = await sql`
+      UPDATE direct_messages SET read_at = NOW()
+      WHERE organization_id = ${req.auth.organizationId}
+        AND sender_id = ${req.params.userId}
+        AND recipient_id = ${req.auth.userId}
+        AND read_at IS NULL
+      RETURNING id
+    `;
+    res.json({ userId: req.params.userId, readCount: result.length });
   } catch (error) { next(error); }
 });
 
@@ -971,11 +1028,61 @@ workspaceRouter.post("/support", async (req, res, next) => {
       message: z.string().trim().min(10).max(5000)
     }).parse(req.body);
     const [user] = await sql`
-      SELECT id, employee_id, email, full_name, title, department
+      SELECT id, employee_id, email, full_name, title, department, initials, avatar_color
       FROM users WHERE id = ${req.auth.userId}
     `;
-    await sendSupportRequest({ user, ...input });
-    res.status(201).json({ message: "Your support request has been sent" });
+    const [administrator] = await sql`
+      SELECT id, email
+      FROM users
+      WHERE organization_id = ${req.auth.organizationId}
+        AND id <> ${req.auth.userId}
+        AND (lower(email) = lower(${config.adminEmail || ""}) OR role = 'senior_leader')
+      ORDER BY CASE WHEN lower(email) = lower(${config.adminEmail || ""}) THEN 0 ELSE 1 END, created_at
+      LIMIT 1
+    `;
+
+    let administratorMessage = null;
+    if (administrator) {
+      const supportBody = [
+        `Support request · ${input.category}`,
+        `Subject: ${input.subject}`,
+        "",
+        input.message,
+        "",
+        `Employee: ${user.full_name} (${user.employee_id || "No employee ID"})`,
+        `Email: ${user.email}`,
+        `Department: ${user.department}`,
+        `Designation: ${user.title}`
+      ].join("\n");
+      [administratorMessage] = await sql`
+        INSERT INTO direct_messages (organization_id, sender_id, recipient_id, body)
+        VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${administrator.id}, ${supportBody})
+        RETURNING id, body, sent_at
+      `;
+      const realtimeMessage = {
+        ...administratorMessage,
+        sender_id: user.id,
+        sender_name: user.full_name,
+        initials: user.initials,
+        avatar_color: user.avatar_color,
+        recipient_id: administrator.id
+      };
+      req.app.get("io")?.to(`user:${administrator.id}`).emit("direct:message", realtimeMessage);
+      sendPushToUser(administrator.id, {
+        title: `Support request from ${user.full_name}`,
+        body: `${input.category}: ${input.subject}`.slice(0, 180),
+        tag: `support-${administratorMessage.id}`,
+        url: "/?view=chat"
+      }).catch(console.error);
+    }
+
+    try {
+      await sendSupportRequest({ user, ...input });
+    } catch (emailError) {
+      console.error("Support request email delivery failed", emailError);
+      if (!administratorMessage) throw emailError;
+    }
+    res.status(201).json({ message: "Your support request has been sent to the administrator" });
   } catch (error) {
     if (error?.name === "ZodError") return next(error);
     next(Object.assign(new Error("We could not send your support request. Please email support directly."), { status: 502, cause: error }));

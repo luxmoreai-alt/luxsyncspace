@@ -28,14 +28,14 @@ export function HelpSupport({ user, onToast }) {
       </header>
       <div className="help-layout">
         <section className="panel support-form-panel">
-          <header className="settings-section-head"><div><h2>Send a support request</h2><p>Our support team will receive your employee and account details with this request.</p></div></header>
+          <header className="settings-section-head"><div><h2>Send a support request</h2><p>Your administrator will receive this request in their LuxSyncspace account with your employee details.</p></div></header>
           {sent ? <div className="support-success"><span><CheckCircle2 size={28} /></span><h2>Request sent</h2><p>We received your message and will reply to {user.email}.</p><button className="button button-secondary" onClick={() => setSent(false)}>Send another request</button></div> :
           <form className="event-form support-form" onSubmit={submit}>
             <label><span>What do you need help with?</span><select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}><option>Technical issue</option><option>Account access</option><option>Feature request</option><option>General help</option></select></label>
             <label><span>Subject</span><input value={form.subject} onChange={(e) => setForm({ ...form, subject: e.target.value })} placeholder="Briefly describe the issue" required /></label>
             <label><span>Details</span><textarea value={form.message} onChange={(e) => setForm({ ...form, message: e.target.value })} placeholder="Tell us what happened, what you expected, and any steps that help us reproduce it…" required /></label>
             <div className="support-identity"><ShieldCheck size={17} /><span>Sending as <b>{user.full_name}</b> · {user.employee_id}</span></div>
-            <button className="button button-primary" disabled={busy}><Send size={17} /> {busy ? "Sending request…" : "Send to support"}</button>
+            <button className="button button-primary" disabled={busy}><Send size={17} /> {busy ? "Sending request…" : "Send to administrator"}</button>
           </form>}
         </section>
         <aside className="help-side">

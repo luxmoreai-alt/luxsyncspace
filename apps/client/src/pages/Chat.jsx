@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, SOCKET_URL, socketOptions } from "../lib/api";
@@ -12,7 +12,7 @@ const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
-export function Chat({ user, channels, people, onRefresh, onToast, initialChannelId, onStartCall }) {
+export function Chat({ user, channels, people, directUnreadCounts = {}, onConversationRead, onRefresh, onToast, initialChannelId, onStartCall }) {
   const [selected, setSelected] = useState(() => channels.some((channel) => channel.id === initialChannelId) ? initialChannelId : null);
   const [selectedPerson, setSelectedPerson] = useState(null);
   const [messages, setMessages] = useState([]);
@@ -71,7 +71,9 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
       if (selectedChannelRef.current !== incoming.channel_id) return;
       setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
       if (document.visibilityState === "visible") {
-        api(`/channels/${incoming.channel_id}/read`, { method: "POST" }).catch(() => {});
+        api(`/channels/${incoming.channel_id}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("channel", incoming.channel_id))
+          .catch(() => {});
       }
     });
     socketRef.current.on("channel:read", (receipt) => {
@@ -109,7 +111,13 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
       }));
     });
     socketRef.current.on("direct:message", (incoming) => {
-      setMessages((current) => selectedPersonRef.current?.id === incoming.sender_id && !current.some((item) => item.id === incoming.id) ? [...current, incoming] : current);
+      if (selectedPersonRef.current?.id !== incoming.sender_id) return;
+      setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
+      if (document.visibilityState === "visible") {
+        api(`/direct/${incoming.sender_id}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("direct", incoming.sender_id))
+          .catch(() => {});
+      }
     });
     return () => {
       socketRef.current?.disconnect();
@@ -123,7 +131,14 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   useEffect(() => {
     const markReadWhenVisible = () => {
       if (document.visibilityState === "visible" && selectedChannelRef.current) {
-        api(`/channels/${selectedChannelRef.current}/read`, { method: "POST" }).catch(() => {});
+        api(`/channels/${selectedChannelRef.current}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("channel", selectedChannelRef.current))
+          .catch(() => {});
+      }
+      if (document.visibilityState === "visible" && selectedPersonRef.current) {
+        api(`/direct/${selectedPersonRef.current.id}/read`, { method: "POST" })
+          .then(() => onConversationRead?.("direct", selectedPersonRef.current.id))
+          .catch(() => {});
       }
     };
     document.addEventListener("visibilitychange", markReadWhenVisible);
@@ -138,7 +153,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
     if (!selected) return;
     setMessages([]);
     Promise.all([api(`/channels/${selected}/messages`), api(`/channels/${selected}/members`)])
-      .then(([conversation, membership]) => { setMessages(conversation.messages); setChannelMembers(membership.members); })
+      .then(([conversation, membership]) => { setMessages(conversation.messages); setChannelMembers(membership.members); onConversationRead?.("channel", selected); })
       .catch((error) => onToast(error.message));
     socketRef.current?.emit("channel:join", selected);
     return () => {
@@ -149,7 +164,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   useEffect(() => {
     if (!selectedPerson) return;
     setMessages([]);
-    api(`/direct/${selectedPerson.id}`).then(({ messages }) => setMessages(messages)).catch((error) => onToast(error.message));
+    api(`/direct/${selectedPerson.id}`).then(({ messages }) => { setMessages(messages); onConversationRead?.("direct", selectedPerson.id); }).catch((error) => onToast(error.message));
   }, [selectedPerson]);
 
   useEffect(() => {
@@ -375,12 +390,12 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
         </nav>
         <div className="channel-heading"><span>GROUPS & CHANNELS</span>{canCreateGroup && <button onClick={() => setCreateGroup(true)}><Plus size={15} /></button>}</div>
         <nav className="channels">
-          {channels.map((channel) => <button key={channel.id} onClick={() => { setSelected(channel.id); setSelectedPerson(null); }} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span></button>)}
+          {channels.map((channel) => <button key={channel.id} onClick={() => { setSelected(channel.id); setSelectedPerson(null); }} className={selected === channel.id ? "active" : ""}>{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}<span>{channel.name}</span><UnreadBadge count={channel.unread_count} /></button>)}
         </nav>
         <div className="channel-heading"><span>EMPLOYEES</span></div>
         <nav className="direct-list">
           {filteredPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
-            <button className="direct-person-open" onClick={() => { setSelected(null); setSelectedPerson(person); }}><Avatar person={person} size="xs" showPresence /><span>{person.full_name}</span></button>
+            <button className="direct-person-open" onClick={() => { setSelected(null); setSelectedPerson(person); }}><Avatar person={person} size="xs" showPresence /><span className="direct-person-name">{person.full_name}</span><UnreadBadge count={directUnreadCounts[person.id]} /></button>
             <span className="direct-call-actions">
               <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={15} /></button>
               <button type="button" onClick={() => onStartCall(person, "video")} title={`Video call ${person.full_name}`} aria-label={`Video call ${person.full_name}`}><Video size={15} /></button>
@@ -400,7 +415,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
               {channels.map((channel) => <button key={channel.id} onClick={() => { setSelected(channel.id); setSelectedPerson(null); }}>
                 <span className="mobile-channel-icon">{channel.is_private ? <Lock size={18} /> : <Hash size={20} />}</span>
                 <span><b>{channel.name}</b><small>{channel.description || (channel.is_private ? "Private channel" : "Channel")}</small></span>
-                <ChevronRight size={18} />
+                <span className="mobile-channel-tail"><UnreadBadge count={channel.unread_count} /><ChevronRight size={18} /></span>
               </button>)}
             </nav>
           </section>
@@ -409,7 +424,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
           <div className="employee-chat-grid">
             {filteredPeople.map((person) => <article key={person.id}>
               <Avatar person={person} size="lg" showPresence />
-              <div><h3>{person.full_name}</h3><p><BriefcaseBusiness size={13} /> {person.title}</p><p><MapPin size={13} /> {person.location || person.department}</p><span>{person.employee_id} · {person.department}</span></div>
+              <div><h3>{person.full_name}<UnreadBadge count={directUnreadCounts[person.id]} /></h3><p><BriefcaseBusiness size={13} /> {person.title}</p><p><MapPin size={13} /> {person.location || person.department}</p><span>{person.employee_id} · {person.department}</span></div>
               {person.id !== user.id && <div className="employee-chat-actions">
                 <button className="button button-secondary employee-message-button" onClick={() => setSelectedPerson(person)}><MessageSquareText size={16} /> Message</button>
                 <div className="mobile-employee-call-actions">
@@ -438,11 +453,14 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
           </div>}
           <div className="messages">
             <div className="channel-intro">{selectedPerson ? <Avatar person={selectedPerson} size="lg" showPresence /> : <span><Hash size={26} /></span>}<h2>{selectedPerson ? `Conversation with ${selectedPerson.full_name}` : `Welcome to #${activeChannel?.name}`}</h2><p>{selectedPerson ? "This is a private conversation between the two of you." : activeChannel?.description}</p></div>
-            <div className="date-divider"><span>Today</span></div>
             {visibleMessages.map((item, index) => {
-              const grouped = index > 0 && visibleMessages[index - 1].sender_id === item.sender_id && new Date(item.sent_at) - new Date(visibleMessages[index - 1].sent_at) < 300000;
+              const previous = visibleMessages[index - 1];
+              const startsNewDay = !previous || !isSameMessageDay(previous.sent_at, item.sent_at);
+              const grouped = !startsNewDay && previous.sender_id === item.sender_id && new Date(item.sent_at) - new Date(previous.sent_at) < 300000;
               const mine = item.sender_id === user.id;
-              return <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`} key={item.id}>
+              return <Fragment key={item.id}>
+                {startsNewDay && <div className="date-divider"><span>{messageDateLabel(item.sent_at)}</span></div>}
+                <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`}>
                 {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
                 <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}</time>{mine && selected && (item.seen_by_all
                   ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
@@ -468,7 +486,8 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
                 {reactionMessageId === item.id && selected && <div className={`message-reaction-picker ${mine ? "align-mine" : ""}`}>
                   {QUICK_REACTIONS.map((emoji) => <button onClick={() => reactToMessage(item, emoji)} key={emoji}>{emoji}</button>)}
                 </div>}
-              </div>;
+                </div>
+              </Fragment>;
             })}
             {messageSearch && !visibleMessages.length && <div className="conversation-search-empty"><Search size={23} /><b>No matching messages</b><span>Try another name, phrase, or file name.</span></div>}
             <div ref={endRef} />
@@ -525,6 +544,34 @@ function formatFileSize(bytes) {
   if (!bytes) return "0 KB";
   if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function UnreadBadge({ count }) {
+  const unread = Number(count) || 0;
+  if (!unread) return null;
+  return <b className="conversation-unread-badge" aria-label={`${unread} unread message${unread === 1 ? "" : "s"}`}>{unread > 99 ? "99+" : unread}</b>;
+}
+
+function isSameMessageDay(first, second) {
+  const a = new Date(first);
+  const b = new Date(second);
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+}
+
+function messageDateLabel(value) {
+  const date = new Date(value);
+  const today = new Date();
+  const targetDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const currentDay = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const daysAgo = Math.round((currentDay - targetDay) / 86_400_000);
+  if (daysAgo === 0) return "Today";
+  if (daysAgo === 1) return "Yesterday";
+  return date.toLocaleDateString([], {
+    weekday: "long",
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() === today.getFullYear() ? undefined : "numeric"
+  });
 }
 
 function MessageBody({ body }) {

@@ -29,6 +29,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT NOT NULL DEFAULT '';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS joined_at DATE NOT NULL DEFAULT CURRENT_DATE;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS manager_id UUID REFERENCES users(id) ON DELETE SET NULL;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS availability_status TEXT NOT NULL DEFAULT 'offline';
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_availability_status_check;
+ALTER TABLE users ADD CONSTRAINT users_availability_status_check CHECK (availability_status IN ('online','break','lunch','unavailable','meeting','offline'));
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_org_employee_id ON users(organization_id, employee_id) WHERE employee_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_users_organization ON users(organization_id, full_name);
 
@@ -154,9 +157,11 @@ CREATE TABLE IF NOT EXISTS direct_messages (
   CHECK (sender_id <> recipient_id)
 );
 ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS attachment_id UUID REFERENCES message_attachments(id) ON DELETE SET NULL;
+ALTER TABLE direct_messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_direct_messages_pair ON direct_messages(organization_id, sender_id, recipient_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient ON direct_messages(recipient_id, sent_at DESC);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_unread ON direct_messages(recipient_id, sender_id) WHERE read_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

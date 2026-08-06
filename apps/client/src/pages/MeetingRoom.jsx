@@ -22,6 +22,7 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
   const [panel, setPanel] = useState(null);
   const [chat, setChat] = useState([]);
   const [chatMessage, setChatMessage] = useState("");
+  const [meetingChatPopup, setMeetingChatPopup] = useState(null);
   const [status, setStatus] = useState("Connecting securely…");
   const [elapsed, setElapsed] = useState("00:00");
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -30,8 +31,17 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
   const localStreamRef = useRef();
   const displayStreamRef = useRef();
   const socketRef = useRef();
+  const panelRef = useRef(null);
   const peersRef = useRef(new Map());
   const iceServersRef = useRef(DEFAULT_ICE_SERVERS);
+
+  useEffect(() => { panelRef.current = panel; }, [panel]);
+
+  useEffect(() => {
+    if (!meetingChatPopup) return;
+    const timer = window.setTimeout(() => setMeetingChatPopup(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [meetingChatPopup]);
 
   useEffect(() => {
     const startedAt = Date.now();
@@ -134,7 +144,10 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
           console.error("Meeting signal failed", error);
         }
       });
-      socket.on("meeting:chat", (incoming) => setChat((current) => [...current, incoming]));
+      socket.on("meeting:chat", (incoming) => {
+        setChat((current) => [...current, incoming]);
+        if (incoming.sender_id !== user.id && panelRef.current !== "chat") setMeetingChatPopup(incoming);
+      });
       socket.on("meeting:hand", ({ socketId, raised: isRaised }) => upsertParticipant(socketId, { raised: isRaised }));
       socket.on("meeting:cancelled", ({ body }) => {
         onToast(body || "This meeting was cancelled by the organizer.");
@@ -288,6 +301,9 @@ export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
         </div>
         <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={onLeave}><PhoneOff size={18} /><span>Leave</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
       </footer>
+      {meetingChatPopup && <button className="meeting-chat-popup" onClick={() => { setPanel("chat"); setMeetingChatPopup(null); }}>
+        <span><MessageSquareText size={18} /></span><div><b>{meetingChatPopup.sender_name}</b><p>{meetingChatPopup.body}</p></div><small>Open chat</small>
+      </button>}
       {confirmEnd && <Modal title="End meeting for everyone?" subtitle={meeting.title} onClose={() => !ending && setConfirmEnd(false)}><div className="end-meeting-confirm"><PhoneOff size={28} /><h3>Everyone will be disconnected</h3><p>Participants will not be able to rejoin this meeting after you end it.</p><div className="modal-actions"><button className="button button-secondary" onClick={() => setConfirmEnd(false)} disabled={ending}>Keep meeting open</button><button className="button button-danger" onClick={endForEveryone} disabled={ending}><PhoneOff size={16} /> {ending ? "Ending…" : "End for everyone"}</button></div></div></Modal>}
     </div>
   );

@@ -20,7 +20,9 @@ authRouter.post("/login", async (req, res, next) => {
     if (!user || !(await bcrypt.compare(input.password, user.password_hash))) {
       return res.status(401).json({ error: "Email or password is incorrect" });
     }
-    await sql`UPDATE users SET presence = 'online' WHERE id = ${user.id}`;
+    await sql`UPDATE users SET presence = 'online', availability_status = 'online' WHERE id = ${user.id}`;
+    user.presence = "online";
+    user.availability_status = "online";
     const token = jwt.sign(
       { userId: user.id, organizationId: user.organization_id, email: user.email },
       config.jwtSecret,
@@ -36,7 +38,7 @@ authRouter.post("/login", async (req, res, next) => {
 authRouter.get("/me", requireAuth, async (req, res) => {
   const [user] = await sql`
     SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,
-           u.bio, u.joined_at, u.manager_id, u.must_change_password, u.initials, u.avatar_color, u.presence,
+           u.bio, u.joined_at, u.manager_id, u.must_change_password, u.initials, u.avatar_color, u.presence, u.availability_status,
            o.name AS organization_name, m.full_name AS manager_name
     FROM users u JOIN organizations o ON o.id = u.organization_id
     LEFT JOIN users m ON m.id = u.manager_id

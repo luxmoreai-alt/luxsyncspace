@@ -89,7 +89,7 @@ export async function sendSupportRequest({ user, category, subject, message }) {
 
   await transporter.sendMail({
     from: `"${config.appName} Support" <${config.smtp.fromEmail}>`,
-    to: config.smtp.fromEmail,
+    to: [...new Set([config.adminEmail, config.smtp.fromEmail].filter(Boolean))],
     replyTo: user.email,
     subject: `[${config.appName} Support] ${subject}`,
     text: `Support request from ${user.full_name} (${user.email}, ${user.employee_id})\nCategory: ${category}\nSubject: ${subject}\n\n${message}`,
