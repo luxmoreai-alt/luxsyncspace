@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
-import { api, apiUrl, SOCKET_URL, socketOptions } from "../lib/api";
+import { api, apiUrl, authStore, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
 import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
