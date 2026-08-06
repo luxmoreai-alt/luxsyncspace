@@ -453,6 +453,11 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .agenda-panel h2 { font-size: 14px; margin: 0 0 3px; }.agenda-panel header p { color: #8a94a4; font-size: 9px; margin: 0; }
 .agenda-list article { display: grid; grid-template-columns: 52px 1fr; gap: 10px; padding: 16px 15px; border-bottom: 1px solid var(--soft-line); position: relative; }
 .agenda-list article::before { content: ""; position: absolute; left: 0; top: 19px; width: 3px; height: 31px; background: var(--event); border-radius: 0 2px 2px 0; }
+.agenda-list article.cancelled { background: #fff8f9; }.agenda-list article.cancelled::before { background: #b74757; }
+.agenda-list article.ended { background: #f7f8fa; }.agenda-list article.ended::before { background: #7d8796; }
+.agenda-list article.cancelled h3, .agenda-list article.ended h3 { color: #7a5360; text-decoration: line-through; }
+.agenda-status { width: max-content; margin-bottom: 6px; padding: 3px 7px; border-radius: 10px; color: #a13748; background: #ffe8ec; display: flex; align-items: center; gap: 4px; font-size: 8px; font-weight: 800; }
+.agenda-list article.ended .agenda-status { color: #667183; background: #e7eaf0; }
 .agenda-time { font-size: 9px; font-weight: 700; padding-top: 2px; }
 .agenda-list h3 { font-size: 11px; margin: 0 0 7px; }
 .agenda-list p { display: flex; gap: 5px; align-items: center; color: #7c8797; font-size: 8.5px; margin: 0 0 5px; }

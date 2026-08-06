@@ -1,5 +1,5 @@
 import { addDays, addWeeks, format, isSameDay, isSameMonth, startOfWeek, subWeeks } from "date-fns";
-import { CalendarDays, ChevronLeft, ChevronRight, Clock, MapPin, Plus, Video } from "lucide-react";
+import { Ban, CalendarDays, ChevronLeft, ChevronRight, Clock, MapPin, Plus, Video } from "lucide-react";
 import { useState } from "react";
 import { eventTime } from "../lib/format";
 import { Avatar } from "../components/Avatar";
@@ -12,6 +12,9 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
   const weekLabel = isSameMonth(weekStart, weekEnd)
     ? format(weekStart, "MMMM yyyy")
     : `${format(weekStart, "MMM yyyy")} – ${format(weekEnd, "MMM yyyy")}`;
+  const upcomingEvents = events
+    .filter((event) => new Date(event.ends_at) > new Date())
+    .slice(0, 5);
 
   function showToday() {
     setWeekStart(startOfWeek(new Date(), { weekStartsOn: 1 }));
@@ -37,7 +40,8 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
               <div className={`day-column ${isSameDay(day, new Date()) ? "today-col" : ""}`} key={day.toISOString()}>
                 {hours.map((hour) => <div className="hour-cell" key={hour} />)}
                 {events.filter((event) => isSameDay(new Date(event.starts_at), day)).map((event) => {
-                  const start = new Date(event.starts_at); const end = new Date(event.ends_at);
+                  const start = new Date(event.starts_at);
+                  const end = new Date(event.ends_at);
                   const unavailable = Boolean(event.cancelled_at || event.ended_at);
                   const top = ((start.getHours() - 8) * 60 + start.getMinutes()) / 60 * 64;
                   const height = Math.max(42, (end - start) / 3600000 * 64);
@@ -55,7 +59,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
                   {dayEvents.map((event) => <button className={event.cancelled_at ? "cancelled" : event.ended_at ? "ended" : ""} disabled={Boolean(event.cancelled_at || event.ended_at)} onClick={() => onJoinMeeting(event)} key={event.id} style={{ "--event": event.color }}>
                     <time>{eventTime(event.starts_at)}</time>
                     <span><b>{event.cancelled_at ? `Cancelled: ${event.title}` : event.ended_at ? `Ended: ${event.title}` : event.title}</b><small>{event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : event.location || (event.is_online ? "LuxSyncspace meeting" : "No location")}</small></span>
-                    {event.cancelled_at ? <span className="calendar-cancelled-mark">×</span> : event.is_online && <Video size={17} />}
+                    {event.cancelled_at || event.ended_at ? <span className="calendar-cancelled-mark">×</span> : event.is_online && <Video size={17} />}
                   </button>)}
                   {!dayEvents.length && <p>No events scheduled</p>}
                 </div>
@@ -66,10 +70,20 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
         <aside className="agenda-panel panel">
           <header><span className="metric-icon blue"><CalendarDays size={19} /></span><div><h2>Up next</h2><p>{format(new Date(), "EEEE, MMMM d")}</p></div></header>
           <div className="agenda-list">
-            {events.filter((event) => !event.cancelled_at && !event.ended_at && new Date(event.ends_at) > new Date()).slice(0, 5).map((event) => <article key={event.id} style={{ "--event": event.color }}>
-              <span className="agenda-time">{eventTime(event.starts_at)}</span>
-              <div><h3>{event.title}</h3><p><Clock size={14} /> {eventTime(event.starts_at)} – {eventTime(event.ends_at)}</p><p><MapPin size={14} /> {event.location}</p><div className="attendee-stack">{event.attendees?.slice(0, 4).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} attending</small></div>{event.is_online && <button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={15} /> Join meeting</button>}</div>
-            </article>)}
+            {upcomingEvents.map((event) => {
+              const unavailable = Boolean(event.cancelled_at || event.ended_at);
+              return <article className={event.cancelled_at ? "cancelled" : event.ended_at ? "ended" : ""} key={event.id} style={{ "--event": event.color }}>
+                <span className="agenda-time">{eventTime(event.starts_at)}</span>
+                <div>
+                  {unavailable && <span className="agenda-status"><Ban size={12} /> {event.cancelled_at ? "Cancelled" : "Ended"}</span>}
+                  <h3>{event.title}</h3>
+                  <p><Clock size={14} /> {eventTime(event.starts_at)} – {eventTime(event.ends_at)}</p>
+                  <p><MapPin size={14} /> {event.cancelled_at ? event.cancellation_reason || "Cancelled by organizer" : event.ended_at ? "Ended by organizer" : event.location}</p>
+                  <div className="attendee-stack">{event.attendees?.slice(0, 4).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} attending</small></div>
+                  {event.is_online && !unavailable && <button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={15} /> Join meeting</button>}
+                </div>
+              </article>;
+            })}
           </div>
         </aside>
       </div>
