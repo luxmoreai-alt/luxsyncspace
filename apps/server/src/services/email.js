@@ -1,5 +1,4 @@
 import nodemailer from "nodemailer";
-import path from "node:path";
 import { config } from "../config.js";
 
 const transporter = nodemailer.createTransport({
@@ -27,17 +26,12 @@ export function createEmployeeInvitationMessage({ to, fullName, temporaryPasswor
   const safeDepartment = escapeHtml(department);
   const safeTitle = escapeHtml(title);
   const loginUrl = config.appUrl;
+  const logoUrl = `${config.appUrl.replace(/\/+$/, "")}/luxmor-logo.jpeg`;
 
   return {
     from: `"${config.appName}" <${config.smtp.fromEmail}>`,
     to,
     subject: `Your ${config.appName} employee account`,
-    attachments: [{
-      filename: "luxmor-ai-logo.jpeg",
-      path: path.join(config.root, "WhatsA mail.jpeg"),
-      cid: "luxmor-ai-logo",
-      contentDisposition: "inline"
-    }],
     text: [
       `Hello ${fullName},`,
       "",
@@ -56,7 +50,7 @@ export function createEmployeeInvitationMessage({ to, fullName, temporaryPasswor
           <tr><td align="center">
             <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #e2e7ef;border-radius:14px;overflow:hidden;box-shadow:0 10px 30px rgba(18,33,61,.08)">
               <tr><td align="center" style="padding:24px 30px 18px;background:#ffffff">
-                <img src="cid:luxmor-ai-logo" width="330" alt="Luxmor AI Technologies" style="display:block;width:100%;max-width:330px;height:auto;border:0">
+                <img src="${logoUrl}" width="330" alt="Luxmor AI Technologies" style="display:block;width:100%;max-width:330px;height:auto;border:0">
               </td></tr>
               <tr><td style="height:5px;background:linear-gradient(90deg,#5725cc,#2557d6,#13a7dc);font-size:0;line-height:0">&nbsp;</td></tr>
               <tr><td style="padding:32px 30px">
@@ -91,23 +85,18 @@ export async function sendSupportRequest({ user, category, subject, message }) {
   const safeCategory = escapeHtml(category);
   const safeSubject = escapeHtml(subject);
   const safeMessage = escapeHtml(message).replace(/\n/g, "<br>");
+  const logoUrl = `${config.appUrl.replace(/\/+$/, "")}/luxmor-logo.jpeg`;
 
   await transporter.sendMail({
     from: `"${config.appName} Support" <${config.smtp.fromEmail}>`,
     to: config.smtp.fromEmail,
     replyTo: user.email,
     subject: `[${config.appName} Support] ${subject}`,
-    attachments: [{
-      filename: "luxmor-ai-logo.jpeg",
-      path: path.join(config.root, "WhatsA mail.jpeg"),
-      cid: "luxmor-ai-logo",
-      contentDisposition: "inline"
-    }],
     text: `Support request from ${user.full_name} (${user.email}, ${user.employee_id})\nCategory: ${category}\nSubject: ${subject}\n\n${message}`,
     html: `<!doctype html><html><body style="margin:0;background:#f4f6fa;font-family:Arial,sans-serif;color:#172033">
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:28px 12px"><tr><td align="center">
         <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #e2e7ef;border-radius:14px;overflow:hidden">
-          <tr><td align="center" style="padding:20px"><img src="cid:luxmor-ai-logo" width="290" alt="Luxmor AI Technologies" style="display:block;width:100%;max-width:290px;height:auto"></td></tr>
+          <tr><td align="center" style="padding:20px"><img src="${logoUrl}" width="290" alt="Luxmor AI Technologies" style="display:block;width:100%;max-width:290px;height:auto"></td></tr>
           <tr><td style="height:5px;background:#2557d6"></td></tr>
           <tr><td style="padding:28px">
             <p style="margin:0 0 8px;color:#2557d6;font-size:12px;font-weight:700;letter-spacing:1px">${safeCategory.toUpperCase()}</p>

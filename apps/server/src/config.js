@@ -11,6 +11,13 @@ function parseIceServers(value) {
   }
 }
 
+function normalizeVapidSubject(value) {
+  const subject = String(value || "").trim();
+  if (!subject) return `mailto:${process.env.SMTP_FROM_EMAIL || "support@localhost"}`;
+  if (/^(mailto:|https:\/\/)/i.test(subject)) return subject;
+  return `mailto:${subject}`;
+}
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: path.join(root, ".env") });
 
@@ -21,6 +28,7 @@ export const config = {
   clientUrl: (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173").split(",")[0].trim(),
   clientUrls: (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173").split(",").map((url) => url.trim()).filter(Boolean),
   allowVercelPreviews: process.env.ALLOW_VERCEL_PREVIEWS === "true",
+  redisUrl: process.env.REDIS_URL,
   appName: process.env.APP_NAME || "LuxSyncspace",
   appUrl: process.env.APP_URL || process.env.CLIENT_URL || "http://localhost:5173",
   smtp: {
@@ -35,7 +43,7 @@ export const config = {
   vapid: {
     publicKey: process.env.VAPID_PUBLIC_KEY,
     privateKey: process.env.VAPID_PRIVATE_KEY,
-    subject: process.env.VAPID_SUBJECT || `mailto:${process.env.SMTP_FROM_EMAIL}`
+    subject: normalizeVapidSubject(process.env.VAPID_SUBJECT || process.env.SMTP_FROM_EMAIL)
   },
   webrtcIceServers: parseIceServers(process.env.WEBRTC_ICE_SERVERS_JSON),
   root,

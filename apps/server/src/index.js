@@ -7,6 +7,8 @@ import compression from "compression";
 import helmet from "helmet";
 import morgan from "morgan";
 import { Server } from "socket.io";
+import { createAdapter } from "@socket.io/redis-adapter";
+import Redis from "ioredis";
 import jwt from "jsonwebtoken";
 import { config } from "./config.js";
 import { authRouter } from "./routes/auth.js";
@@ -25,6 +27,14 @@ function allowOrigin(origin, callback) {
 }
 
 const io = new Server(server, { cors: { origin: allowOrigin, credentials: true } });
+if (config.redisUrl) {
+  const redisOptions = { maxRetriesPerRequest: null, enableReadyCheck: false };
+  const pubClient = new Redis(config.redisUrl, redisOptions);
+  const subClient = pubClient.duplicate();
+  io.adapter(createAdapter(pubClient, subClient));
+  pubClient.on("error", (error) => console.error("Redis publisher error", error.message));
+  subClient.on("error", (error) => console.error("Redis subscriber error", error.message));
+}
 app.set("io", io);
 
 app.use(helmet({ contentSecurityPolicy: false }));
@@ -87,14 +97,14 @@ io.on("connection", (socket) => {
       const room = `meeting:${meeting.id}`;
       const existingSockets = await io.in(room).fetchSockets();
       socket.meetingRoom = room;
-      socket.meetingProfile = profile;
+      socket.data.meetingProfile = profile;
       socket.join(room);
       acknowledge({
         ok: true,
         meeting,
         participants: existingSockets.map((participant) => ({
           socketId: participant.id,
-          user: participant.meetingProfile
+          user: participant.data.meetingProfile
         })).filter((participant) => participant.user)
       });
       socket.to(room).emit("meeting:user-joined", { socketId: socket.id, user: profile });
@@ -104,10 +114,10 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("meeting:signal", ({ target, signal }) => {
-    const targetSocket = io.sockets.sockets.get(target);
+  socket.on("meeting:signal", async ({ target, signal }) => {
+    const [targetSocket] = await io.in(target).fetchSockets();
     if (!socket.meetingRoom || !targetSocket?.rooms.has(socket.meetingRoom)) return;
-    io.to(target).emit("meeting:signal", { from: socket.id, signal, user: socket.meetingProfile });
+    io.to(target).emit("meeting:signal", { from: socket.id, signal, user: socket.data.meetingProfile });
   });
 
   socket.on("meeting:chat", ({ body }) => {
@@ -117,7 +127,7 @@ io.on("connection", (socket) => {
       id: crypto.randomUUID(),
       body: message,
       sender_id: socket.auth.userId,
-      sender_name: socket.meetingProfile?.full_name || "Participant",
+      sender_name: socket.data.meetingProfile?.full_name || "Participant",
       sent_at: new Date().toISOString()
     });
   });
@@ -139,12 +149,14 @@ io.on("connection", (socket) => {
 });
 startEventReminderScheduler(io);
 
-const clientDist = path.join(config.root, "apps/client/dist");
-app.use(express.static(clientDist));
-app.get("*", (req, res, next) => {
-  if (req.path.startsWith("/api")) return next();
-  res.sendFile(path.join(clientDist, "index.html"), (error) => error && next());
-});
+if (!process.env.VERCEL) {
+  const clientDist = path.join(config.root, "apps/client/dist");
+  app.use(express.static(clientDist));
+  app.get("*", (req, res, next) => {
+    if (req.path.startsWith("/api")) return next();
+    res.sendFile(path.join(clientDist, "index.html"), (error) => error && next());
+  });
+}
 
 app.use((error, _req, res, _next) => {
   console.error(error);
@@ -152,4 +164,8 @@ app.use((error, _req, res, _next) => {
   res.status(error.status || 500).json({ error: error.status ? error.message : "Something went wrong. Please try again." });
 });
 
-server.listen(config.port, () => console.log(`LuxSyncspace API listening on http://localhost:${config.port}`));
+if (!process.env.VERCEL) {
+  server.listen(config.port, () => console.log(`LuxSyncspace API listening on http://localhost:${config.port}`));
+}
+
+export default server;

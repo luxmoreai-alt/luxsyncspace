@@ -3,29 +3,32 @@
 LuxSyncspace has two deployment parts:
 
 - The React/Vite PWA is deployed to Vercel.
-- The Express, Socket.IO, notification, and WebRTC-signalling server is deployed to a persistent Node.js host such as Render, Railway, or Fly.io.
+- The Express, Socket.IO, notification, and WebRTC-signalling server is deployed as a second Vercel project.
 
-The realtime server must remain online for chat, presence, incoming calls, and meeting signalling. It should not be moved into a short-lived serverless function.
+Vercel WebSockets are currently in Public Beta. Connections run on Fluid compute and can close when a Function reaches its duration limit, so the client reconnects when needed. Redis is required so rooms and events work across multiple Function instances.
 
-## 1. Prepare the realtime server
+## 1. Deploy the realtime backend to Vercel
 
-Create a Node.js web service from this repository on your chosen backend host.
+Import the same Git repository as a new Vercel project:
 
-- Build command: `npm install && npm run db:migrate`
-- Start command: `npm run start`
-- Health check path: `/api/health`
+```text
+Root directory: apps/server
+Framework preset: Express
+Install command: npm install
+Build command: npm run db:migrate
+```
 
-Copy the server variables from the root `.env.example` into the host's environment settings. At minimum, configure:
+Copy the server variables from the root `.env.example` into the backend project's environment settings. At minimum, configure:
 
 ```text
 DATABASE_URL=postgresql://...
 JWT_SECRET=use-a-long-random-production-secret
 CLIENT_URLS=https://your-project.vercel.app
 APP_URL=https://your-project.vercel.app
-PORT=4000
+REDIS_URL=rediss://...
 ```
 
-Also configure the existing ZeptoMail, VAPID, and WebRTC variables. Never commit the `.env` file.
+Create a managed Redis database, such as Upstash Redis from the Vercel Marketplace, and use its `rediss://` connection URL. Also configure the existing ZeptoMail, VAPID, and WebRTC variables. Never commit the `.env` file.
 
 For dependable calls outside the office network, configure a production TURN service in `WEBRTC_ICE_SERVERS_JSON`. STUN alone cannot connect users behind every firewall or mobile carrier.
 
@@ -42,10 +45,10 @@ Example shape:
 ]
 ```
 
-Wait for the server to deploy, then verify:
+Deploy and verify:
 
 ```text
-https://your-api-host.example/api/health
+https://your-backend-project.vercel.app/api/health
 ```
 
 ## 2. Deploy the PWA to Vercel
@@ -77,8 +80,8 @@ The root `vercel.json` supplies these workspace settings.
 Add these Vercel environment variables for Production, Preview, and Development:
 
 ```text
-VITE_API_URL=https://your-api-host.example/api
-VITE_SOCKET_URL=https://your-api-host.example
+VITE_API_URL=https://your-backend-project.vercel.app/api
+VITE_SOCKET_URL=https://your-backend-project.vercel.app
 ```
 
 With `apps/client` selected as the root, Vercel will run:
@@ -92,7 +95,7 @@ The generated frontend is served from `dist`.
 
 ## 3. Connect both deployments
 
-After Vercel provides the final domain, update the backend environment:
+After Vercel provides the final frontend domain, update the backend project's environment:
 
 ```text
 CLIENT_URLS=https://your-project.vercel.app
@@ -105,7 +108,7 @@ For multiple approved frontend domains, separate them with commas:
 CLIENT_URLS=https://your-project.vercel.app,https://syncspace.luxmorai.com
 ```
 
-Redeploy the backend after changing these values. If Vercel preview deployments must connect to the backend, set `ALLOW_VERCEL_PREVIEWS=true`; leave it disabled when previews do not need production data.
+Redeploy both projects after changing these values. If Vercel preview deployments must connect to the backend, set `ALLOW_VERCEL_PREVIEWS=true`; leave it disabled when previews do not need production data.
 
 ## 4. Verify production
 
@@ -117,7 +120,7 @@ Redeploy the backend after changing these values. If Vercel preview deployments 
 6. Create a scheduled meeting and confirm the 30-minute reminder.
 7. Send an employee invitation and confirm the branded email arrives.
 
-For 200–300 concurrent users on one realtime server, monitor memory, CPU, open connections, and database connection count. Before horizontally scaling the Socket.IO server, add shared realtime coordination such as the Socket.IO Redis adapter and use a managed Redis service.
+For 200–300 concurrent users, monitor Fluid compute usage, Function duration, Redis connections, and database connection count. The backend includes the Socket.IO Redis adapter when `REDIS_URL` is configured.
 
 ## Vercel CLI alternative
 
