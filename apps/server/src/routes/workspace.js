@@ -117,7 +117,7 @@ workspaceRouter.get("/bootstrap", async (req, res, next) => {
           WHERE e.organization_id = ${organizationId}
             AND e.starts_at >= date_trunc('day', NOW()) - INTERVAL '1 day'
             AND e.starts_at < date_trunc('day', NOW()) + INTERVAL '14 days'
-          GROUP BY e.id, u.full_name ORDER BY e.starts_at`)
+          GROUP BY e.id, u.full_name, u.hide_full_name, u.display_name ORDER BY e.starts_at`)
       ,
       cached(`announcements:${organizationId}`, 30_000, () => sql`SELECT a.id, a.title, a.body, a.priority, a.published_at,
              CASE WHEN u.hide_full_name THEN COALESCE(NULLIF(u.display_name, ''), 'Team member') ELSE u.full_name END AS author_name,

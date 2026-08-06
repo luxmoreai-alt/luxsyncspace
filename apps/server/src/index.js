@@ -176,7 +176,9 @@ if (!process.env.VERCEL) {
 app.use((error, _req, res, _next) => {
   console.error(error);
   if (error?.name === "ZodError") return res.status(400).json({ error: error.issues[0]?.message || "Invalid request" });
-  res.status(error.status || 500).json({ error: error.status ? error.message : "Something went wrong. Please try again." });
+  res.status(error.status || 500).json({
+    error: error.status || process.env.NODE_ENV !== "production" ? error.message : "Something went wrong. Please try again."
+  });
 });
 
 if (!process.env.VERCEL) {
