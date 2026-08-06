@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS channel_members (
   PRIMARY KEY (channel_id, user_id)
 );
 ALTER TABLE channel_members ADD COLUMN IF NOT EXISTS muted BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE channel_members ADD COLUMN IF NOT EXISTS last_read_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_channel_members_user ON channel_members(user_id, channel_id);
 
 CREATE TABLE IF NOT EXISTS message_attachments (

@@ -260,6 +260,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .chat-message.grouped > div { grid-column: 2; }
 .chat-message header { display: flex; align-items: baseline; gap: 8px; height: 18px; }
 .chat-message header b { font-size: 11px; }.chat-message header time { color: #98a1af; font-size: 8px; }
+.message-meta { display: inline-flex; align-items: center; gap: 3px; }.message-sent-status { height: 14px; color: #748196; display: inline-grid; place-items: center; }
+.message-sent-status.seen { color: #1684d6; }
 .chat-message p { margin: 0; color: #475267; font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; }
 .message-more { visibility: hidden; border: 1px solid var(--line); border-radius: 5px; height: 25px; background: white; color: #7e8999; }
 .chat-message:hover .message-more { visibility: visible; }
@@ -689,7 +691,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .chat-message.grouped > div { grid-column: 2; border-radius: 12px; }
   .chat-message header { height: auto; min-height: 15px; margin-bottom: 2px; justify-content: space-between; gap: 12px; }
   .chat-message header b { color: #1e2b40; font-size: 11px; }
-  .chat-message header time { margin-left: auto; color: #8994a5; font-size: 9px; white-space: nowrap; }
+  .chat-message header .message-meta { margin-left: auto; }.chat-message header time { color: #8994a5; font-size: 9px; white-space: nowrap; }
+  .message-sent-status { color: #64748b; }
   .chat-message p { color: #27364c; font-size: 13.5px; line-height: 1.42; overflow-wrap: anywhere; }
   .chat-message.mine { margin-left: auto; display: flex; justify-content: flex-end; }
   .chat-message.mine > .avatar { display: none; }

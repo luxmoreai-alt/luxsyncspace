@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BriefcaseBusiness, Check, ChevronDown, ChevronRight, Download, FileText, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -34,6 +34,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   const fileInputRef = useRef();
   const socketRef = useRef();
   const selectedPersonRef = useRef(null);
+  const selectedChannelRef = useRef(null);
   const activeChannel = channels.find((channel) => channel.id === selected);
   const canCreateGroup = ["hr", "senior_leader", "manager", "team_lead"].includes(user.role);
   const filteredPeople = useMemo(() => people.filter((person) =>
@@ -58,7 +59,18 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
 
   useEffect(() => {
     socketRef.current = io(SOCKET_URL, socketOptions());
-    socketRef.current.on("channel:message", (incoming) => setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]));
+    socketRef.current.on("channel:message", (incoming) => {
+      if (selectedChannelRef.current !== incoming.channel_id) return;
+      setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]);
+      if (document.visibilityState === "visible") {
+        api(`/channels/${incoming.channel_id}/read`, { method: "POST" }).catch(() => {});
+      }
+    });
+    socketRef.current.on("channel:read", (receipt) => {
+      if (selectedChannelRef.current !== receipt.channelId || !receipt.seenMessageIds?.length) return;
+      const seenIds = new Set(receipt.seenMessageIds);
+      setMessages((current) => current.map((item) => seenIds.has(item.id) ? { ...item, seen_by_all: true } : item));
+    });
     socketRef.current.on("direct:message", (incoming) => {
       setMessages((current) => selectedPersonRef.current?.id === incoming.sender_id && !current.some((item) => item.id === incoming.id) ? [...current, incoming] : current);
     });
@@ -69,6 +81,21 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   }, []);
 
   useEffect(() => { selectedPersonRef.current = selectedPerson; }, [selectedPerson]);
+  useEffect(() => { selectedChannelRef.current = selected; }, [selected]);
+
+  useEffect(() => {
+    const markReadWhenVisible = () => {
+      if (document.visibilityState === "visible" && selectedChannelRef.current) {
+        api(`/channels/${selectedChannelRef.current}/read`, { method: "POST" }).catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", markReadWhenVisible);
+    window.addEventListener("focus", markReadWhenVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", markReadWhenVisible);
+      window.removeEventListener("focus", markReadWhenVisible);
+    };
+  }, []);
 
   useEffect(() => {
     if (!selected) return;
@@ -302,7 +329,9 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
               const mine = item.sender_id === user.id;
               return <div className={`chat-message ${grouped ? "grouped" : ""} ${mine ? "mine" : "theirs"}`} key={item.id}>
                 {!grouped && <Avatar person={{ initials: item.initials, avatar_color: item.avatar_color }} />}
-                <div><header>{!grouped && <b>{item.sender_name}</b>}<time>{eventTime(item.sent_at)}</time></header>
+                <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}</time>{mine && selected && (item.seen_by_all
+                  ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
+                  : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
                   {item.body && <MessageBody body={item.body} />}
                   {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
                     <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />

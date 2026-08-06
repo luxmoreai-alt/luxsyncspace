@@ -130,6 +130,45 @@ const groupRoles = new Set(["hr", "senior_leader", "manager", "team_lead"]);
 const announcementRoles = new Set(["hr", "senior_leader"]);
 const inviteRoles = new Set(["hr", "senior_leader", "manager"]);
 
+async function markChannelRead(req, channelId) {
+  const [receipt] = await sql`
+    UPDATE channel_members member
+    SET last_read_at = NOW()
+    FROM channels channel
+    WHERE member.channel_id = channel.id
+      AND member.channel_id = ${channelId}
+      AND member.user_id = ${req.auth.userId}
+      AND channel.organization_id = ${req.auth.organizationId}
+    RETURNING member.last_read_at
+  `;
+  if (!receipt) return null;
+
+  const seenMessages = await sql`
+    SELECT message.id
+    FROM channel_messages message
+    WHERE message.channel_id = ${channelId}
+      AND message.sender_id <> ${req.auth.userId}
+      AND message.sent_at <= ${receipt.last_read_at}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM channel_members reader
+        WHERE reader.channel_id = message.channel_id
+          AND reader.user_id <> message.sender_id
+          AND (reader.last_read_at IS NULL OR reader.last_read_at < message.sent_at)
+      )
+    ORDER BY message.sent_at DESC
+    LIMIT 200
+  `;
+  const result = {
+    channelId,
+    userId: req.auth.userId,
+    readAt: receipt.last_read_at,
+    seenMessageIds: seenMessages.map((message) => message.id)
+  };
+  req.app.get("io")?.to(`channel:${channelId}`).emit("channel:read", result);
+  return result;
+}
+
 async function currentRole(userId) {
   const [user] = await sql`SELECT role FROM users WHERE id = ${userId}`;
   return user?.role;
@@ -424,10 +463,18 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
 
 workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
   try {
+    const receipt = await markChannelRead(req, req.params.id);
+    if (!receipt) return res.status(403).json({ error: "You are not a member of this channel" });
     const messages = await sql`
       SELECT cm.id, cm.body, cm.sent_at, u.id AS sender_id, u.full_name AS sender_name,
              u.initials, u.avatar_color, u.title, a.id AS attachment_id, a.file_name,
-             a.mime_type, a.file_size
+             a.mime_type, a.file_size,
+             NOT EXISTS (
+               SELECT 1 FROM channel_members reader
+               WHERE reader.channel_id = cm.channel_id
+                 AND reader.user_id <> cm.sender_id
+                 AND (reader.last_read_at IS NULL OR reader.last_read_at < cm.sent_at)
+             ) AS seen_by_all
       FROM channel_messages cm JOIN users u ON u.id = cm.sender_id
       LEFT JOIN message_attachments a ON a.id = cm.attachment_id
       JOIN channel_members member ON member.channel_id = cm.channel_id AND member.user_id = ${req.auth.userId}
@@ -435,6 +482,14 @@ workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
       ORDER BY cm.sent_at ASC LIMIT 200
     `;
     res.json({ messages });
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/channels/:id/read", async (req, res, next) => {
+  try {
+    const receipt = await markChannelRead(req, req.params.id);
+    if (!receipt) return res.status(403).json({ error: "You are not a member of this channel" });
+    res.json(receipt);
   } catch (error) { next(error); }
 });
 
@@ -460,7 +515,14 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       SELECT file_name, mime_type, file_size FROM message_attachments WHERE id = ${message.attachment_id}
     ` : [null];
     const [sender] = await sql`SELECT id AS sender_id, full_name AS sender_name, initials, avatar_color, title FROM users WHERE id = ${req.auth.userId}`;
-    const result = { ...message, ...sender, ...attachment, channel_id: req.params.id };
+    const [unreadMember] = await sql`
+      SELECT 1 FROM channel_members
+      WHERE channel_id = ${req.params.id}
+        AND user_id <> ${req.auth.userId}
+        AND (last_read_at IS NULL OR last_read_at < ${message.sent_at})
+      LIMIT 1
+    `;
+    const result = { ...message, ...sender, ...attachment, channel_id: req.params.id, seen_by_all: !unreadMember };
     req.app.get("io")?.to(`channel:${req.params.id}`).emit("channel:message", result);
     const [channel] = await sql`SELECT name FROM channels WHERE id = ${req.params.id}`;
     sendPushToChannel(req.params.id, req.auth.userId, {
