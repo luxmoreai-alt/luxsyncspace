@@ -20,13 +20,20 @@ import { cached } from "./services/cache.js";
 const app = express();
 const server = http.createServer(app);
 function allowOrigin(origin, callback) {
+  const normalizedOrigin = String(origin || "").replace(/\/+$/, "");
   const allowed = !origin
-    || config.clientUrls.includes(origin)
-    || (config.allowVercelPreviews && /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(origin));
-  callback(allowed ? null : new Error("Origin is not allowed"), allowed);
+    || config.clientUrls.includes(normalizedOrigin)
+    || (config.allowVercelPreviews && /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(normalizedOrigin));
+  callback(null, allowed);
 }
 
-const io = new Server(server, { cors: { origin: allowOrigin, credentials: true } });
+const corsOptions = {
+  origin: allowOrigin,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type"]
+};
+const io = new Server(server, { cors: corsOptions });
 if (config.redisUrl) {
   const redisOptions = { maxRetriesPerRequest: null, enableReadyCheck: false };
   const pubClient = new Redis(config.redisUrl, redisOptions);
@@ -38,7 +45,7 @@ if (config.redisUrl) {
 app.set("io", io);
 
 app.use(helmet({ contentSecurityPolicy: false }));
-app.use(cors({ origin: allowOrigin, credentials: true }));
+app.use(cors(corsOptions));
 app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));

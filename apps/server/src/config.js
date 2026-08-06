@@ -18,15 +18,29 @@ function normalizeVapidSubject(value) {
   return `mailto:${subject}`;
 }
 
+function normalizeOrigin(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 dotenv.config({ path: path.join(root, ".env") });
+
+const configuredClientUrls = (process.env.CLIENT_URLS || process.env.CLIENT_URL || "")
+  .split(",")
+  .map(normalizeOrigin)
+  .filter(Boolean);
+const clientUrls = [...new Set([
+  "http://localhost:5173",
+  "https://luxsyncspace.vercel.app",
+  ...configuredClientUrls
+])];
 
 export const config = {
   port: Number(process.env.PORT || 4000),
   databaseUrl: process.env.DATABASE_URL,
   jwtSecret: process.env.JWT_SECRET || "development-only-secret",
-  clientUrl: (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173").split(",")[0].trim(),
-  clientUrls: (process.env.CLIENT_URLS || process.env.CLIENT_URL || "http://localhost:5173").split(",").map((url) => url.trim()).filter(Boolean),
+  clientUrl: configuredClientUrls[0] || "http://localhost:5173",
+  clientUrls,
   allowVercelPreviews: process.env.ALLOW_VERCEL_PREVIEWS === "true",
   redisUrl: process.env.REDIS_URL,
   appName: process.env.APP_NAME || "LuxSyncspace",
