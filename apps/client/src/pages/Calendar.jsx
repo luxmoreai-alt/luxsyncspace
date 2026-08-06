@@ -6,7 +6,7 @@ import { Avatar } from "../components/Avatar";
 
 export function Calendar({ events, onNewEvent, onJoinMeeting }) {
   const [weekStart, setWeekStart] = useState(() => startOfWeek(new Date(), { weekStartsOn: 1 }));
-  const days = Array.from({ length: 5 }, (_, index) => addDays(weekStart, index));
+  const days = Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
   const hours = Array.from({ length: 10 }, (_, index) => index + 8);
   const weekEnd = days[days.length - 1];
   const weekLabel = isSameMonth(weekStart, weekEnd)
@@ -30,7 +30,7 @@ export function Calendar({ events, onNewEvent, onJoinMeeting }) {
         <section className="calendar-main panel">
           <header className="calendar-toolbar">
             <div><button className="button button-secondary button-small calendar-today" onClick={showToday}>Today</button><button className="icon-button" onClick={() => setWeekStart((current) => subWeeks(current, 1))} aria-label="Previous week" title="Previous week"><ChevronLeft size={19} /></button><button className="icon-button" onClick={() => setWeekStart((current) => addWeeks(current, 1))} aria-label="Next week" title="Next week"><ChevronRight size={19} /></button><h2>{weekLabel}</h2></div>
-            <button className="view-select">Work week <ChevronRight size={15} /></button>
+            <div className="view-select">Week</div>
           </header>
           <div className="week-grid">
             <div className="time-head" />

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, Mail, MapPin, Pencil, Phone, Save, Search, Send, ShieldCheck, Smartphone, UserRound, Users, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, Mail, MapPin, Pencil, Phone, Save, Search, Send, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -23,6 +23,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
   const [query, setQuery] = useState("");
   const [invite, setInvite] = useState(emptyInvite);
   const [busy, setBusy] = useState(false);
@@ -31,6 +32,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const [privacy, setPrivacy] = useState({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
   const isInstalled = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
+  const canDeleteEmployees = ["hr", "senior_leader"].includes(user.role);
   const filtered = people.filter((person) => `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
 
   useEffect(() => {
@@ -125,11 +127,34 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     finally { setBusy(false); }
   }
 
+  async function deleteEmployee() {
+    if (!pendingDelete) return;
+    setBusy(true);
+    try {
+      const result = await api(`/employees/${pendingDelete.id}/employment`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "deleted" })
+      });
+      setPendingDelete(null);
+      setSelected(null);
+      setEditing(null);
+      await onRefresh();
+      onToast(result.message || "Employee deleted");
+    } catch (error) { onToast(error.message); }
+    finally { setBusy(false); }
+  }
+
   function canEditEmployee(person) {
     if (!canInvite) return false;
     if (user.role === "manager" && ["hr", "senior_leader"].includes(person.role)) return false;
     if (user.role === "hr" && person.role === "senior_leader") return false;
     return true;
+  }
+
+  function canDeleteEmployee(person) {
+    if (!canDeleteEmployees || person.id === user.id) return false;
+    if (person.role === "senior_leader" && user.role !== "senior_leader") return false;
+    return (person.employment_status || "active") === "active";
   }
 
   return (
@@ -203,7 +228,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           </>}
         </section>
       </div>
-      {selected && !editing && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{canEditEmployee(selected) && <div className="employee-profile-actions"><button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button></div>}</div></Modal>}
+      {selected && !editing && !pendingDelete && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{(canEditEmployee(selected) || canDeleteEmployee(selected)) && <div className="employee-profile-actions">{canDeleteEmployee(selected) && <button className="button button-danger" onClick={() => setPendingDelete(selected)}><UserX size={16} /> Delete employee</button>}{canEditEmployee(selected) && <button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button>}</div>}</div></Modal>}
       {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => setEditing(null)}>
         <form className="event-form" onSubmit={updateEmployee}>
           <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: e.target.value })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
@@ -214,6 +239,14 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <label><span>Employee profile summary</span><textarea value={editing.bio} onChange={(e) => setEditing({ ...editing, bio: e.target.value })} maxLength={1000} /></label>
           <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setEditing(null)} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>
         </form>
+      </Modal>}
+      {pendingDelete && <Modal title={`Delete ${pendingDelete.full_name}?`} subtitle="Employee account management" onClose={() => !busy && setPendingDelete(null)}>
+        <div className="employment-confirm">
+          <UserX size={30} />
+          <h3>Deactivate and mark as deleted</h3>
+          <p>The employee will be signed out and will no longer be able to access the workspace. Existing conversations and records will be preserved.</p>
+          <div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button><button className="button button-danger" onClick={deleteEmployee} disabled={busy}>{busy ? "Deleting…" : "Delete employee"}</button></div>
+        </div>
       </Modal>}
     </div>
   );
