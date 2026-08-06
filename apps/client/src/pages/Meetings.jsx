@@ -1,0 +1,76 @@
+import { useState } from "react";
+import { CalendarClock, Check, Clock, Copy, Mic, Plus, Search, Send, Users, Video } from "lucide-react";
+import { format } from "date-fns";
+import { Avatar } from "../components/Avatar";
+import { Modal } from "../components/Modal";
+
+export function Meetings({ user, events, people, onJoinMeeting, onStartMeeting, onScheduleMeeting, onToast }) {
+  const [instantOpen, setInstantOpen] = useState(false);
+  const upcoming = events.filter((event) => new Date(event.ends_at) > new Date());
+
+  function copyLink(event) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("meeting", event.id);
+    navigator.clipboard.writeText(url.toString()).then(() => onToast("Meeting link copied"));
+  }
+
+  return (
+    <div className="meetings-page page-pad">
+      <header className="page-header meeting-page-header">
+        <div><span className="eyebrow">LUXSYNCSPACE MEETINGS</span><h1>Meetings</h1><p>Start secure internal calls and manage your scheduled meetings.</p></div>
+        <div className="header-actions"><button className="button button-secondary" onClick={onScheduleMeeting}><CalendarClock size={17} /> Schedule meeting</button><button className="button button-primary" onClick={() => setInstantOpen(true)}><Video size={17} /> New instant meeting</button></div>
+      </header>
+      <section className="meeting-overview">
+        <article><span className="metric-icon blue"><Video size={20} /></span><div><b>{upcoming.length}</b><small>Upcoming meetings</small></div></article>
+        <article><span className="metric-icon green"><Users size={20} /></span><div><b>{people.length}</b><small>Available employees</small></div></article>
+        <button onClick={() => onStartMeeting({ title: `${user.full_name}'s instant meeting`, attendeeIds: [], mode: "video" })}><Plus size={20} /><span><b>Meet now</b><small>Start a private room immediately</small></span></button>
+      </section>
+      <section className="panel meetings-list-panel">
+        <header className="panel-header"><div><h2>Scheduled meetings</h2><p>Internal rooms and invitations from your workspace calendar</p></div></header>
+        <div className="meetings-list">
+          {upcoming.map((event) => <article key={event.id}>
+            <div className="meeting-date"><b>{format(new Date(event.starts_at), "d")}</b><small>{format(new Date(event.starts_at), "MMM")}</small></div>
+            <div className="meeting-list-main"><span className="meeting-mode-chip">{event.meeting_mode === "audio" ? <Mic size={13} /> : <Video size={13} />} {event.meeting_mode === "audio" ? "Voice" : "Video"}</span><h3>{event.title}</h3><p><Clock size={14} /> {format(new Date(event.starts_at), "EEE, MMM d · h:mm a")} – {format(new Date(event.ends_at), "h:mm a")}</p><div className="attendee-stack">{event.attendees?.slice(0, 5).map((person) => <Avatar person={{ initials: person.initials, avatar_color: person.color }} size="xxs" key={person.id} />)}<small>{event.attendees?.length || 0} invited</small></div></div>
+            <div className="meeting-list-actions"><button className="button button-secondary button-small" onClick={() => copyLink(event)}><Copy size={14} /> Copy link</button><button className="button button-primary button-small" onClick={() => onJoinMeeting(event)}><Video size={14} /> Join</button></div>
+          </article>)}
+          {!upcoming.length && <div className="empty-state"><CalendarClock size={30} /><h3>No scheduled meetings</h3><p>Schedule a meeting or start an instant room.</p></div>}
+        </div>
+      </section>
+      {instantOpen && <InstantMeeting people={people.filter((person) => person.id !== user.id)} onClose={() => setInstantOpen(false)} onStart={async (details) => { await onStartMeeting(details); setInstantOpen(false); }} />}
+    </div>
+  );
+}
+
+function InstantMeeting({ people, onStart, onClose }) {
+  const [title, setTitle] = useState("Instant team meeting");
+  const [mode, setMode] = useState("video");
+  const [attendeeIds, setAttendeeIds] = useState([]);
+  const [query, setQuery] = useState("");
+  const [busy, setBusy] = useState(false);
+  const filtered = people.filter((person) => `${person.full_name} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
+  const toggle = (id) => setAttendeeIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    try { await onStart({ title, mode, attendeeIds }); }
+    finally { setBusy(false); }
+  }
+
+  return <Modal title="New instant meeting" subtitle="Select employees and share the room immediately" onClose={onClose}>
+    <form className="event-form" onSubmit={submit}>
+      <label><span>Meeting title</span><input value={title} onChange={(event) => setTitle(event.target.value)} required /></label>
+      <div className="meeting-mode-select"><button type="button" className={mode === "video" ? "active" : ""} onClick={() => setMode("video")}><Video size={17} /><span><b>Video meeting</b><small>Camera and microphone</small></span></button><button type="button" className={mode === "audio" ? "active" : ""} onClick={() => setMode("audio")}><Mic size={17} /><span><b>Voice meeting</b><small>Microphone only</small></span></button></div>
+      <div className="group-members-field">
+        <div className="group-members-label"><span>Share with employees</span><small>{attendeeIds.length} selected</small></div>
+        <label className="group-member-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search employees" /></label>
+        <div className="group-member-list meeting-attendee-list">{filtered.map((person) => {
+          const selected = attendeeIds.includes(person.id);
+          return <button type="button" className={selected ? "selected" : ""} onClick={() => toggle(person.id)} key={person.id}><Avatar person={person} size="xs" /><span><b>{person.full_name}</b><small>{person.title} · {person.department}</small></span><i>{selected && <Check size={14} />}</i></button>;
+        })}</div>
+        <div className="meeting-share-note"><Send size={15} /><span>The meeting link will be sent to each selected employee’s direct chat with a notification.</span></div>
+      </div>
+      <footer className="modal-actions"><button type="button" className="button button-secondary" onClick={onClose}>Cancel</button><button className="button button-primary" disabled={busy}><Video size={17} /> {busy ? "Starting…" : "Start and share"}</button></footer>
+    </form>
+  </Modal>;
+}

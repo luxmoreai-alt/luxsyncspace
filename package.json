@@ -1,0 +1,21 @@
+{
+  "name": "luxsyncspace-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/client",
+    "apps/server"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run dev -w apps/server\" \"npm run dev -w apps/client\"",
+    "build": "npm run build -w apps/client",
+    "start": "npm run start -w apps/server",
+    "test:smoke": "node scripts/smoke.js",
+    "db:migrate": "npm run db:migrate -w apps/server",
+    "db:seed": "npm run db:seed -w apps/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}
