@@ -468,7 +468,24 @@ workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
     const messages = await sql`
       SELECT cm.id, cm.body, cm.sent_at, u.id AS sender_id, u.full_name AS sender_name,
              u.initials, u.avatar_color, u.title, a.id AS attachment_id, a.file_name,
-             a.mime_type, a.file_size,
+             a.mime_type, a.file_size, cm.deleted_at, cm.reply_to_id, cm.forwarded_from_id,
+             reply.body AS reply_body, reply_user.full_name AS reply_sender_name,
+             reply.deleted_at AS reply_deleted_at,
+             COALESCE((
+               SELECT json_agg(json_build_object(
+                 'emoji', grouped.emoji,
+                 'count', grouped.reaction_count,
+                 'reacted_by_me', grouped.reacted_by_me
+               ) ORDER BY grouped.first_reaction)
+               FROM (
+                 SELECT reaction.emoji, COUNT(*)::int AS reaction_count,
+                        BOOL_OR(reaction.user_id = ${req.auth.userId}) AS reacted_by_me,
+                        MIN(reaction.reacted_at) AS first_reaction
+                 FROM channel_message_reactions reaction
+                 WHERE reaction.message_id = cm.id
+                 GROUP BY reaction.emoji
+               ) grouped
+             ), '[]'::json) AS reactions,
              NOT EXISTS (
                SELECT 1 FROM channel_members reader
                WHERE reader.channel_id = cm.channel_id
@@ -477,8 +494,14 @@ workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
              ) AS seen_by_all
       FROM channel_messages cm JOIN users u ON u.id = cm.sender_id
       LEFT JOIN message_attachments a ON a.id = cm.attachment_id
+      LEFT JOIN channel_messages reply ON reply.id = cm.reply_to_id
+      LEFT JOIN users reply_user ON reply_user.id = reply.sender_id
       JOIN channel_members member ON member.channel_id = cm.channel_id AND member.user_id = ${req.auth.userId}
       WHERE cm.channel_id = ${req.params.id}
+        AND NOT EXISTS (
+          SELECT 1 FROM channel_message_hidden hidden
+          WHERE hidden.message_id = cm.id AND hidden.user_id = ${req.auth.userId}
+        )
       ORDER BY cm.sent_at ASC LIMIT 200
     `;
     res.json({ messages });
@@ -497,18 +520,31 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
   try {
     const input = z.object({
       body: z.string().trim().max(5000).default(""),
-      attachmentId: z.string().uuid().nullable().optional()
-    }).refine((value) => value.body || value.attachmentId, { message: "Enter a message or attach a file" }).parse(req.body);
+      attachmentId: z.string().uuid().nullable().optional(),
+      replyTo: z.string().uuid().nullable().optional(),
+      forwardedFrom: z.string().uuid().nullable().optional()
+    }).refine((value) => value.body || value.attachmentId || value.forwardedFrom, { message: "Enter a message or attach a file" }).parse(req.body);
     const [membership] = await sql`SELECT 1 FROM channel_members WHERE channel_id = ${req.params.id} AND user_id = ${req.auth.userId}`;
     if (!membership) return res.status(403).json({ error: "You are not a member of this channel" });
     const [message] = await sql`
-      INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id)
-      SELECT ${req.params.id}, ${req.auth.userId}, ${input.body}, a.id
+      INSERT INTO channel_messages (channel_id, sender_id, body, attachment_id, reply_to_id, forwarded_from_id)
+      SELECT ${req.params.id}, ${req.auth.userId}, ${input.body},
+        COALESCE(a.id, (
+          SELECT forwarded.attachment_id FROM channel_messages forwarded
+          JOIN channel_members forwarded_access ON forwarded_access.channel_id = forwarded.channel_id
+            AND forwarded_access.user_id = ${req.auth.userId}
+          WHERE forwarded.id = ${input.forwardedFrom || null} AND forwarded.deleted_at IS NULL
+        )),
+        (SELECT reply.id FROM channel_messages reply
+         WHERE reply.id = ${input.replyTo || null} AND reply.channel_id = ${req.params.id} AND reply.deleted_at IS NULL),
+        (SELECT forwarded.id FROM channel_messages forwarded
+         JOIN channel_members access ON access.channel_id = forwarded.channel_id AND access.user_id = ${req.auth.userId}
+         WHERE forwarded.id = ${input.forwardedFrom || null} AND forwarded.deleted_at IS NULL)
       FROM (SELECT 1) seed
       LEFT JOIN message_attachments a ON a.id = ${input.attachmentId || null}
         AND a.organization_id = ${req.auth.organizationId} AND a.uploader_id = ${req.auth.userId}
       WHERE ${input.attachmentId || null}::uuid IS NULL OR a.id IS NOT NULL
-      RETURNING id, body, sent_at, attachment_id
+      RETURNING id, body, sent_at, attachment_id, reply_to_id, forwarded_from_id
     `;
     if (!message) return res.status(400).json({ error: "The selected attachment is not available" });
     const [attachment] = message.attachment_id ? await sql`
@@ -522,7 +558,22 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
         AND (last_read_at IS NULL OR last_read_at < ${message.sent_at})
       LIMIT 1
     `;
-    const result = { ...message, ...sender, ...attachment, channel_id: req.params.id, seen_by_all: !unreadMember };
+    const [reply] = message.reply_to_id ? await sql`
+      SELECT original.body AS reply_body, original.deleted_at AS reply_deleted_at,
+             author.full_name AS reply_sender_name
+      FROM channel_messages original
+      JOIN users author ON author.id = original.sender_id
+      WHERE original.id = ${message.reply_to_id}
+    ` : [null];
+    const result = {
+      ...message,
+      ...sender,
+      ...attachment,
+      ...reply,
+      channel_id: req.params.id,
+      seen_by_all: !unreadMember,
+      reactions: []
+    };
     req.app.get("io")?.to(`channel:${req.params.id}`).emit("channel:message", result);
     const [channel] = await sql`SELECT name FROM channels WHERE id = ${req.params.id}`;
     sendPushToChannel(req.params.id, req.auth.userId, {
@@ -532,6 +583,100 @@ workspaceRouter.post("/channels/:id/messages", async (req, res, next) => {
       url: "/"
     }).catch(console.error);
     res.status(201).json(result);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.delete("/channels/:channelId/messages/:messageId", async (req, res, next) => {
+  try {
+    const scope = z.enum(["me", "everyone"]).parse(req.query.scope || "me");
+    const [membership] = await sql`
+      SELECT 1 FROM channel_members
+      WHERE channel_id = ${req.params.channelId} AND user_id = ${req.auth.userId}
+    `;
+    if (!membership) return res.status(403).json({ error: "You are not a member of this channel" });
+
+    if (scope === "me") {
+      const [hidden] = await sql`
+        INSERT INTO channel_message_hidden (message_id, user_id)
+        SELECT message.id, ${req.auth.userId}
+        FROM channel_messages message
+        WHERE message.id = ${req.params.messageId} AND message.channel_id = ${req.params.channelId}
+        ON CONFLICT DO NOTHING
+        RETURNING message_id
+      `;
+      if (!hidden) {
+        const [existing] = await sql`
+          SELECT 1 FROM channel_message_hidden
+          WHERE message_id = ${req.params.messageId} AND user_id = ${req.auth.userId}
+        `;
+        if (!existing) return res.status(404).json({ error: "Message not found" });
+      }
+      return res.json({ id: req.params.messageId, scope });
+    }
+
+    const [deleted] = await sql`
+      UPDATE channel_messages
+      SET body = '', attachment_id = NULL, deleted_at = NOW(), deleted_by = ${req.auth.userId}
+      WHERE id = ${req.params.messageId} AND channel_id = ${req.params.channelId}
+        AND sender_id = ${req.auth.userId} AND deleted_at IS NULL
+      RETURNING id, deleted_at
+    `;
+    if (!deleted) return res.status(403).json({ error: "Only the sender can delete this message for everyone" });
+    await sql`DELETE FROM channel_message_reactions WHERE message_id = ${deleted.id}`;
+    const result = { id: deleted.id, channelId: req.params.channelId, deleted_at: deleted.deleted_at, scope };
+    req.app.get("io")?.to(`channel:${req.params.channelId}`).emit("channel:message-deleted", result);
+    res.json(result);
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/channels/:channelId/messages/:messageId/reactions", async (req, res, next) => {
+  try {
+    const { emoji } = z.object({ emoji: z.string().trim().min(1).max(16) }).parse(req.body);
+    const [message] = await sql`
+      SELECT channel_message.id
+      FROM channel_messages channel_message
+      JOIN channel_members member ON member.channel_id = channel_message.channel_id
+      WHERE channel_message.id = ${req.params.messageId}
+        AND channel_message.channel_id = ${req.params.channelId}
+        AND channel_message.deleted_at IS NULL
+        AND member.user_id = ${req.auth.userId}
+    `;
+    if (!message) return res.status(404).json({ error: "Message not found" });
+    const [existing] = await sql`
+      SELECT emoji FROM channel_message_reactions
+      WHERE message_id = ${req.params.messageId} AND user_id = ${req.auth.userId}
+    `;
+    const userEmoji = existing?.emoji === emoji ? null : emoji;
+    if (!userEmoji) {
+      await sql`
+        DELETE FROM channel_message_reactions
+        WHERE message_id = ${req.params.messageId} AND user_id = ${req.auth.userId}
+      `;
+    } else {
+      await sql`
+        INSERT INTO channel_message_reactions (message_id, user_id, emoji)
+        VALUES (${req.params.messageId}, ${req.auth.userId}, ${emoji})
+        ON CONFLICT (message_id, user_id) DO UPDATE
+        SET emoji = EXCLUDED.emoji, reacted_at = NOW()
+      `;
+    }
+    const reactions = await sql`
+      SELECT reaction.emoji, COUNT(*)::int AS count,
+             BOOL_OR(reaction.user_id = ${req.auth.userId}) AS reacted_by_me
+      FROM channel_message_reactions reaction
+      WHERE reaction.message_id = ${req.params.messageId}
+      GROUP BY reaction.emoji
+      ORDER BY MIN(reaction.reacted_at)
+    `;
+    const result = {
+      id: req.params.messageId,
+      channelId: req.params.channelId,
+      actorId: req.auth.userId,
+      userEmoji,
+      reactions
+    };
+    req.app.get("io")?.to(`channel:${req.params.channelId}`).emit("channel:message-reaction", result);
+    res.json(result);
   } catch (error) { next(error); }
 });
 

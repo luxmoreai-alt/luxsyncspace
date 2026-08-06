@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
+import { ArrowLeft, Bell, BriefcaseBusiness, Check, CheckCheck, ChevronDown, ChevronRight, Download, FileText, Forward, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Reply, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, apiUrl, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
@@ -9,6 +9,7 @@ import { Modal } from "../components/Modal";
 import { eventTime } from "../lib/format";
 
 const EMOJIS = ["😀", "😃", "😊", "😂", "😍", "🥳", "😎", "🤔", "👍", "👏", "🙌", "🙏", "💪", "✅", "🎉", "🔥", "⭐", "💡", "❤️", "🚀", "📌", "📅", "💼", "👋"];
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 const ACCEPTED_FILES = ".jpg,.jpeg,.png,.gif,.webp,.pdf,.txt,.csv,.zip,.doc,.docx,.xls,.xlsx,.ppt,.pptx";
 
 export function Chat({ user, channels, people, onRefresh, onToast, initialChannelId, onStartCall }) {
@@ -29,6 +30,10 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   const [messageSearch, setMessageSearch] = useState("");
   const [moreOpen, setMoreOpen] = useState(false);
   const [deleteGroupOpen, setDeleteGroupOpen] = useState(false);
+  const [messageMenuId, setMessageMenuId] = useState(null);
+  const [reactionMessageId, setReactionMessageId] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [forwardingMessage, setForwardingMessage] = useState(null);
   const endRef = useRef();
   const textareaRef = useRef();
   const fileInputRef = useRef();
@@ -51,6 +56,9 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
     setMessageSearch("");
     setMessageSearchOpen(false);
     setMoreOpen(false);
+    setMessageMenuId(null);
+    setReactionMessageId(null);
+    setReplyingTo(null);
   }, [selected]);
 
   useEffect(() => {
@@ -70,6 +78,35 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
       if (selectedChannelRef.current !== receipt.channelId || !receipt.seenMessageIds?.length) return;
       const seenIds = new Set(receipt.seenMessageIds);
       setMessages((current) => current.map((item) => seenIds.has(item.id) ? { ...item, seen_by_all: true } : item));
+    });
+    socketRef.current.on("channel:message-deleted", (deleted) => {
+      if (selectedChannelRef.current !== deleted.channelId) return;
+      setMessages((current) => current.map((item) => {
+        if (item.id === deleted.id) return {
+          ...item,
+          body: "",
+          attachment_id: null,
+          deleted_at: deleted.deleted_at,
+          reactions: []
+        };
+        return item.reply_to_id === deleted.id ? { ...item, reply_deleted_at: deleted.deleted_at } : item;
+      }));
+    });
+    socketRef.current.on("channel:message-reaction", (update) => {
+      if (selectedChannelRef.current !== update.channelId) return;
+      setMessages((current) => current.map((item) => {
+        if (item.id !== update.id) return item;
+        const previous = new Map((item.reactions || []).map((reaction) => [reaction.emoji, reaction]));
+        return {
+          ...item,
+          reactions: update.reactions.map((reaction) => ({
+            ...reaction,
+            reacted_by_me: update.actorId === user.id
+              ? reaction.emoji === update.userEmoji
+              : Boolean(previous.get(reaction.emoji)?.reacted_by_me)
+          }))
+        };
+      }));
     });
     socketRef.current.on("direct:message", (incoming) => {
       setMessages((current) => selectedPersonRef.current?.id === incoming.sender_id && !current.some((item) => item.id === incoming.id) ? [...current, incoming] : current);
@@ -126,15 +163,93 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
     setBusy(true);
     const body = message;
     const selectedAttachment = attachment;
+    const selectedReply = replyingTo;
     setMessage("");
     setAttachment(null);
+    setReplyingTo(null);
     setEmojiOpen(false);
     try {
       const endpoint = selectedPerson ? `/direct/${selectedPerson.id}` : `/channels/${selected}/messages`;
-      const sent = await api(endpoint, { method: "POST", body: JSON.stringify({ body, attachmentId: selectedAttachment?.id || null }) });
+      const sent = await api(endpoint, {
+        method: "POST",
+        body: JSON.stringify({
+          body,
+          attachmentId: selectedAttachment?.id || null,
+          replyTo: selectedPerson ? null : selectedReply?.id || null
+        })
+      });
       setMessages((current) => current.some((item) => item.id === sent.id) ? current : [...current, sent]);
-    } catch (error) { setMessage(body); setAttachment(selectedAttachment); onToast(error.message); }
+    } catch (error) {
+      setMessage(body);
+      setAttachment(selectedAttachment);
+      setReplyingTo(selectedReply);
+      onToast(error.message);
+    }
     finally { setBusy(false); }
+  }
+
+  function replyToMessage(item) {
+    setReplyingTo(item);
+    setMessageMenuId(null);
+    setReactionMessageId(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
+  async function reactToMessage(item, emoji) {
+    try {
+      const result = await api(`/channels/${selected}/messages/${item.id}/reactions`, {
+        method: "POST",
+        body: JSON.stringify({ emoji })
+      });
+      setMessages((current) => current.map((messageItem) => messageItem.id === item.id ? {
+        ...messageItem,
+        reactions: result.reactions
+      } : messageItem));
+      setReactionMessageId(null);
+      setMessageMenuId(null);
+    } catch (error) { onToast(error.message); }
+  }
+
+  async function deleteMessage(item, scope) {
+    try {
+      const result = await api(`/channels/${selected}/messages/${item.id}?scope=${scope}`, { method: "DELETE" });
+      if (scope === "me") {
+        setMessages((current) => current.filter((messageItem) => messageItem.id !== item.id));
+      } else {
+        setMessages((current) => current.map((messageItem) => {
+          if (messageItem.id === item.id) return {
+            ...messageItem,
+            body: "",
+            attachment_id: null,
+            deleted_at: result.deleted_at,
+            reactions: []
+          };
+          return messageItem.reply_to_id === item.id ? { ...messageItem, reply_deleted_at: result.deleted_at } : messageItem;
+        }));
+      }
+      setMessageMenuId(null);
+      setReactionMessageId(null);
+      onToast(scope === "me" ? "Message deleted for you" : "Message deleted for everyone");
+    } catch (error) { onToast(error.message); }
+  }
+
+  async function forwardMessage(targetType, targetId) {
+    if (!forwardingMessage) return;
+    try {
+      if (targetType === "channel") {
+        await api(`/channels/${targetId}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ body: forwardingMessage.body, forwardedFrom: forwardingMessage.id })
+        });
+      } else {
+        await api(`/direct/${targetId}`, {
+          method: "POST",
+          body: JSON.stringify({ body: `Forwarded from ${forwardingMessage.sender_name}\n${forwardingMessage.body}` })
+        });
+      }
+      setForwardingMessage(null);
+      onToast("Message forwarded");
+    } catch (error) { onToast(error.message); }
   }
 
   async function chooseFile(event) {
@@ -264,7 +379,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
         </nav>
         <div className="channel-heading"><span>EMPLOYEES</span></div>
         <nav className="direct-list">
-          {filteredPeople.filter((person) => person.id !== user.id).slice(0, 8).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
+          {filteredPeople.filter((person) => person.id !== user.id).map((person) => <div className={`direct-person-row ${selectedPerson?.id === person.id ? "active" : ""}`} key={person.id}>
             <button className="direct-person-open" onClick={() => { setSelected(null); setSelectedPerson(person); }}><Avatar person={person} size="xs" showPresence /><span>{person.full_name}</span></button>
             <span className="direct-call-actions">
               <button type="button" onClick={() => onStartCall(person, "audio")} title={`Voice call ${person.full_name}`} aria-label={`Voice call ${person.full_name}`}><Phone size={15} /></button>
@@ -332,18 +447,34 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
                 <div><header>{!grouped && <b>{item.sender_name}</b>}<span className="message-meta"><time>{eventTime(item.sent_at)}</time>{mine && selected && (item.seen_by_all
                   ? <span className="message-sent-status seen" title="Seen by everyone" aria-label="Seen by everyone"><CheckCheck size={14} strokeWidth={2.5} /></span>
                   : <span className="message-sent-status" title="Sent" aria-label="Sent"><Check size={13} strokeWidth={2.6} /></span>)}</span></header>
-                  {item.body && <MessageBody body={item.body} />}
+                  {item.forwarded_from_id && !item.deleted_at && <span className="forwarded-label"><Forward size={12} /> Forwarded</span>}
+                  {item.reply_to_id && !item.deleted_at && <div className="message-reply-preview"><b>{item.reply_sender_name || "Message"}</b><span>{item.reply_deleted_at ? "This message was deleted" : item.reply_body}</span></div>}
+                  {item.deleted_at ? <p className="deleted-message"><Trash2 size={14} /> This message was deleted</p> : item.body && <MessageBody body={item.body} />}
                   {item.attachment_id && <button className="message-attachment" onClick={() => downloadAttachment(item)}>
                     <span><FileText size={19} /></span><span><b>{item.file_name}</b><small>{formatFileSize(item.file_size)}</small></span><Download size={17} />
                   </button>}
+                  {!!item.reactions?.length && !item.deleted_at && <div className="message-reactions">
+                    {item.reactions.map((reaction) => <button className={reaction.reacted_by_me ? "mine" : ""} onClick={() => reactToMessage(item, reaction.emoji)} key={reaction.emoji}><span>{reaction.emoji}</span><b>{reaction.count}</b></button>)}
+                  </div>}
                 </div>
-                <button className="message-more"><MoreHorizontal size={16} /></button>
+                {selected && <button className="message-more" onClick={() => { setMessageMenuId(messageMenuId === item.id ? null : item.id); setReactionMessageId(null); }} aria-label="Message actions"><MoreHorizontal size={16} /></button>}
+                {messageMenuId === item.id && selected && <div className={`message-actions-menu ${mine ? "align-mine" : ""}`}>
+                  {!item.deleted_at && <><button onClick={() => setReactionMessageId(reactionMessageId === item.id ? null : item.id)}><Smile size={16} /> React</button>
+                    <button onClick={() => replyToMessage(item)}><Reply size={16} /> Reply</button>
+                    <button onClick={() => { setForwardingMessage(item); setMessageMenuId(null); }}><Forward size={16} /> Forward</button></>}
+                  <button onClick={() => deleteMessage(item, "me")}><Trash2 size={16} /> Delete for me</button>
+                  {mine && !item.deleted_at && <button className="danger-menu-item" onClick={() => deleteMessage(item, "everyone")}><Trash2 size={16} /> Delete for everyone</button>}
+                </div>}
+                {reactionMessageId === item.id && selected && <div className={`message-reaction-picker ${mine ? "align-mine" : ""}`}>
+                  {QUICK_REACTIONS.map((emoji) => <button onClick={() => reactToMessage(item, emoji)} key={emoji}>{emoji}</button>)}
+                </div>}
               </div>;
             })}
             {messageSearch && !visibleMessages.length && <div className="conversation-search-empty"><Search size={23} /><b>No matching messages</b><span>Try another name, phrase, or file name.</span></div>}
             <div ref={endRef} />
           </div>
           <form className="message-composer" onSubmit={send}>
+            {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
             <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
@@ -382,6 +513,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
       </aside>}
       {createGroup && <CreateGroup people={people.filter((person) => person.id !== user.id)} onCreate={submitGroup} onClose={() => setCreateGroup(false)} />}
       {manageMembers && selected && <ManageGroupMembers channel={activeChannel} people={people} members={channelMembers} currentUserId={user.id} onSave={saveMembers} onClose={() => setManageMembers(false)} />}
+      {forwardingMessage && <ForwardMessageModal message={forwardingMessage} channels={channels} people={people.filter((person) => person.id !== user.id)} onForward={forwardMessage} onClose={() => setForwardingMessage(null)} />}
       {deleteGroupOpen && activeChannel && <Modal title="Delete group" subtitle={`Permanently remove #${activeChannel.name}`} onClose={() => setDeleteGroupOpen(false)}>
         <div className="delete-confirm"><span><Trash2 size={24} /></span><h3>Delete #{activeChannel.name}?</h3><p>All messages, attachments, and membership records in this group will be permanently deleted. This cannot be recovered.</p><footer><button className="button button-secondary" onClick={() => setDeleteGroupOpen(false)}>Cancel</button><button className="button button-danger" onClick={deleteGroup}><Trash2 size={16} /> Delete group</button></footer></div>
       </Modal>}
@@ -401,4 +533,20 @@ function MessageBody({ body }) {
     ? <a className="message-link" href={part} key={`${part}-${index}`}>{part}</a>
     : part
   )}</p>;
+}
+
+function ForwardMessageModal({ message, channels, people, onForward, onClose }) {
+  const [query, setQuery] = useState("");
+  const term = query.trim().toLowerCase();
+  const visibleChannels = channels.filter((channel) => channel.name.toLowerCase().includes(term));
+  const visiblePeople = people.filter((person) => `${person.full_name} ${person.title}`.toLowerCase().includes(term));
+  return <Modal title="Forward message" subtitle="Choose a group or employee" onClose={onClose}>
+    <div className="forward-message-modal">
+      <div className="forward-message-preview"><Forward size={16} /><span>{message.body || message.file_name || "Attachment"}</span></div>
+      <label className="section-search"><Search size={16} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search groups or employees" /></label>
+      {!!visibleChannels.length && <section><small>GROUPS &amp; CHANNELS</small>{visibleChannels.map((channel) => <button onClick={() => onForward("channel", channel.id)} key={channel.id}><span className="forward-target-icon">{channel.is_private ? <Lock size={16} /> : <Hash size={17} />}</span><span><b>{channel.name}</b><em>{channel.description || "Channel"}</em></span><Forward size={16} /></button>)}</section>}
+      {!!visiblePeople.length && <section><small>EMPLOYEES</small>{visiblePeople.map((person) => <button onClick={() => onForward("person", person.id)} key={person.id}><Avatar person={person} size="xs" showPresence /><span><b>{person.full_name}</b><em>{person.title}</em></span><Forward size={16} /></button>)}</section>}
+      {!visibleChannels.length && !visiblePeople.length && <p className="forward-empty">No matching conversation found.</p>}
+    </div>
+  </Modal>;
 }

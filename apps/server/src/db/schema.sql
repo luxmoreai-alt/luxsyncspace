@@ -124,6 +124,25 @@ CREATE TABLE IF NOT EXISTS channel_messages (
   sent_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS attachment_id UUID REFERENCES message_attachments(id) ON DELETE SET NULL;
+ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS reply_to_id UUID REFERENCES channel_messages(id) ON DELETE SET NULL;
+ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS forwarded_from_id UUID REFERENCES channel_messages(id) ON DELETE SET NULL;
+ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS deleted_by UUID REFERENCES users(id) ON DELETE SET NULL;
+
+CREATE TABLE IF NOT EXISTS channel_message_hidden (
+  message_id UUID NOT NULL REFERENCES channel_messages(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  hidden_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (message_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS channel_message_reactions (
+  message_id UUID NOT NULL REFERENCES channel_messages(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  emoji TEXT NOT NULL,
+  reacted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (message_id, user_id)
+);
 
 CREATE TABLE IF NOT EXISTS direct_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
