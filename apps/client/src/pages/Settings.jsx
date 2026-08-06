@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, Building2, CalendarDays, Download, Mail, MapPin, Phone, Search, Send, ShieldCheck, Smartphone, UserRound, Users, Volume2 } from "lucide-react";
+import { Badge, Bell, Building2, CalendarDays, Download, Mail, MapPin, Pencil, Phone, Save, Search, Send, ShieldCheck, Smartphone, UserRound, Users, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -22,6 +22,7 @@ const emptyInvite = () => ({
 export function Settings({ user, people, onToast, onRefresh }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
+  const [editing, setEditing] = useState(null);
   const [query, setQuery] = useState("");
   const [invite, setInvite] = useState(emptyInvite);
   const [busy, setBusy] = useState(false);
@@ -77,6 +78,42 @@ export function Settings({ user, people, onToast, onRefresh }) {
     finally { setBusy(false); }
   }
 
+  function startEditing(person) {
+    setEditing({
+      fullName: person.full_name || "",
+      employeeId: person.employee_id || "",
+      email: person.email || "",
+      title: person.title || "",
+      department: person.department || "",
+      role: person.role || "employee",
+      phone: person.phone || "",
+      location: person.location || "",
+      managerId: person.manager_id || "",
+      joinedAt: person.joined_at ? String(person.joined_at).slice(0, 10) : new Date().toISOString().slice(0, 10),
+      bio: person.bio || ""
+    });
+  }
+
+  async function updateEmployee(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const result = await api(`/employees/${selected.id}`, { method: "PATCH", body: JSON.stringify(editing) });
+      setSelected(result.employee);
+      setEditing(null);
+      await onRefresh();
+      onToast(result.message || "Employee details updated");
+    } catch (error) { onToast(error.message); }
+    finally { setBusy(false); }
+  }
+
+  function canEditEmployee(person) {
+    if (!canInvite) return false;
+    if (user.role === "manager" && ["hr", "senior_leader"].includes(person.role)) return false;
+    if (user.role === "hr" && person.role === "senior_leader") return false;
+    return true;
+  }
+
   return (
     <div className="settings-page page-pad">
       <header className="page-header"><div><span className="eyebrow">SETTINGS</span><h1>Profile & organization</h1><p>Review employee information and manage workspace access.</p></div></header>
@@ -93,7 +130,7 @@ export function Settings({ user, people, onToast, onRefresh }) {
             <header className="settings-section-head"><div><h2>Employee profiles</h2><p>View company identity, designation, team, and contact details.</p></div></header>
             <label className="section-search settings-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by employee ID, name, or designation" /></label>
             <div className="employee-table">
-              {filtered.map((person) => <button key={person.id} onClick={() => setSelected(person)}><Avatar person={person} /><span><b>{person.full_name}</b><small>{person.employee_id}</small></span><span><b>{person.title}</b><small>{person.department}</small></span><span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span></button>)}
+              {filtered.map((person) => <button key={person.id} onClick={() => setSelected(person)}><Avatar person={person} /><span><b>{person.full_name}</b><small>{person.employee_id}</small></span><span><b>{person.title}</b><small>{person.department}</small></span><span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span>{canEditEmployee(person) && <span className="employee-edit-hint"><Pencil size={13} /> Edit</span>}</button>)}
             </div>
           </>}
           {tab === "invite" && canInvite && <>
@@ -135,7 +172,18 @@ export function Settings({ user, people, onToast, onRefresh }) {
           </>}
         </section>
       </div>
-      {selected && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} /></div></Modal>}
+      {selected && !editing && <Modal title="Employee profile" subtitle={selected.employee_id} onClose={() => setSelected(null)}><div className="profile-modal"><ProfileDetails person={selected} />{canEditEmployee(selected) && <div className="employee-profile-actions"><button className="button button-primary" onClick={() => startEditing(selected)}><Pencil size={16} /> Edit details</button></div>}</div></Modal>}
+      {selected && editing && <Modal title="Edit employee details" subtitle={selected.employee_id} onClose={() => setEditing(null)}>
+        <form className="event-form" onSubmit={updateEmployee}>
+          <div className="form-grid"><label><span>Employee name</span><input value={editing.fullName} onChange={(e) => setEditing({ ...editing, fullName: e.target.value })} required /></label><label><span>Work email</span><input type="email" value={editing.email} onChange={(e) => setEditing({ ...editing, email: e.target.value })} required /></label></div>
+          <div className="form-grid"><label><span>Employee ID</span><input value={editing.employeeId} onChange={(e) => setEditing({ ...editing, employeeId: e.target.value.toUpperCase() })} pattern="[A-Za-z0-9-]{3,30}" required /></label><label><span>Designation</span><input value={editing.title} onChange={(e) => setEditing({ ...editing, title: e.target.value })} required /></label></div>
+          <div className="form-grid"><label><span>Department</span><input value={editing.department} onChange={(e) => setEditing({ ...editing, department: e.target.value })} required /></label><label><span>Access role</span><select value={editing.role} onChange={(e) => setEditing({ ...editing, role: e.target.value })}><option value="employee">Employee</option><option value="team_lead">Team lead</option><option value="manager">Manager</option><option value="hr" disabled={user.role === "manager"}>HR</option>{user.role === "senior_leader" && <option value="senior_leader">Senior leader</option>}</select></label></div>
+          <div className="form-grid"><label><span>Phone number</span><input type="tel" value={editing.phone} onChange={(e) => setEditing({ ...editing, phone: e.target.value })} /></label><label><span>Work location</span><input value={editing.location} onChange={(e) => setEditing({ ...editing, location: e.target.value })} /></label></div>
+          <div className="form-grid"><label><span>Reporting manager</span><select value={editing.managerId} onChange={(e) => setEditing({ ...editing, managerId: e.target.value })}><option value="">Not assigned</option>{people.filter((person) => person.id !== selected.id).map((person) => <option value={person.id} key={person.id}>{person.full_name} · {person.title}</option>)}</select></label><label><span>Joining date</span><input type="date" value={editing.joinedAt} onChange={(e) => setEditing({ ...editing, joinedAt: e.target.value })} required /></label></div>
+          <label><span>Employee profile summary</span><textarea value={editing.bio} onChange={(e) => setEditing({ ...editing, bio: e.target.value })} maxLength={1000} /></label>
+          <div className="modal-actions"><button type="button" className="button button-secondary" onClick={() => setEditing(null)} disabled={busy}>Cancel</button><button className="button button-primary" disabled={busy}><Save size={16} /> {busy ? "Saving…" : "Save changes"}</button></div>
+        </form>
+      </Modal>}
     </div>
   );
 }

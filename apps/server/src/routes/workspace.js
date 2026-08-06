@@ -461,6 +461,67 @@ workspaceRouter.post("/invitations", async (req, res, next) => {
   }
 });
 
+workspaceRouter.patch("/employees/:id", async (req, res, next) => {
+  try {
+    const role = await currentRole(req.auth.userId);
+    if (!inviteRoles.has(role)) return res.status(403).json({ error: "Only HR, managers, and senior leaders can edit employee details" });
+
+    const employeeId = z.string().uuid().parse(req.params.id);
+    const input = z.object({
+      fullName: z.string().trim().min(2).max(120),
+      employeeId: z.string().trim().toUpperCase().regex(/^[A-Z0-9-]{3,30}$/, "Employee ID must use letters, numbers, or hyphens"),
+      email: z.string().trim().email(),
+      title: z.string().trim().min(2).max(120),
+      role: z.enum(["employee", "team_lead", "manager", "hr", "senior_leader"]),
+      department: z.string().trim().min(2).max(100),
+      phone: z.string().trim().max(40).default(""),
+      location: z.string().trim().max(120).default(""),
+      bio: z.string().trim().max(1000).default(""),
+      managerId: z.union([z.string().uuid(), z.literal(""), z.null()]).default(""),
+      joinedAt: z.string().date()
+    }).parse(req.body);
+
+    const [target] = await sql`
+      SELECT id, role FROM users
+      WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
+    `;
+    if (!target) return res.status(404).json({ error: "Employee not found" });
+    if (role === "manager" && (["hr", "senior_leader"].includes(target.role) || ["hr", "senior_leader"].includes(input.role))) {
+      return res.status(403).json({ error: "Managers cannot change HR or senior leader accounts" });
+    }
+    if (role === "hr" && (target.role === "senior_leader" || input.role === "senior_leader")) {
+      return res.status(403).json({ error: "Only a senior leader can change senior leader accounts" });
+    }
+    if (input.managerId === employeeId) return res.status(400).json({ error: "An employee cannot be their own reporting manager" });
+    if (input.managerId) {
+      const [manager] = await sql`
+        SELECT id FROM users WHERE id = ${input.managerId} AND organization_id = ${req.auth.organizationId}
+      `;
+      if (!manager) return res.status(400).json({ error: "The selected reporting manager is not available" });
+    }
+
+    const initials = input.fullName.split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
+    const [employee] = await sql`
+      UPDATE users
+      SET employee_id = ${input.employeeId}, email = ${input.email}, full_name = ${input.fullName},
+          title = ${input.title}, department = ${input.department}, role = ${input.role},
+          phone = ${input.phone}, location = ${input.location}, bio = ${input.bio},
+          manager_id = ${input.managerId || null}, joined_at = ${input.joinedAt}, initials = ${initials}
+      WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId}
+      RETURNING id, employee_id, email, full_name, title, department, role, phone, location,
+                bio, manager_id, joined_at, initials, avatar_color, presence
+    `;
+    const [manager] = employee.manager_id
+      ? await sql`SELECT full_name AS manager_name FROM users WHERE id = ${employee.manager_id}`
+      : [];
+    invalidateCache(`people:${req.auth.organizationId}`, "socket-memberships:");
+    res.json({ employee: { ...employee, manager_name: manager?.manager_name || null }, message: "Employee details updated" });
+  } catch (error) {
+    if (error?.code === "23505") return res.status(409).json({ error: "This email address or employee ID already exists" });
+    next(error);
+  }
+});
+
 workspaceRouter.get("/channels/:id/messages", async (req, res, next) => {
   try {
     const receipt = await markChannelRead(req, req.params.id);
