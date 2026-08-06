@@ -446,6 +446,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .calendar-event { position: absolute; left: 5px; right: 5px; z-index: 2; overflow: hidden; border: 0; border-left: 3px solid var(--event); border-radius: 5px; background: color-mix(in srgb, var(--event) 12%, white); color: color-mix(in srgb, var(--event) 80%, #172033); padding: 6px; text-align: left; display: grid; align-content: start; gap: 2px; }
 .calendar-event b { font-size: 9px; line-height: 1.25; }.calendar-event small { font-size: 8px; opacity: .75; }
 .calendar-event.cancelled { cursor: default; border-left-color: #b74757; color: #8f3947; background: #fff0f2; opacity: .78; }.calendar-event.cancelled b { text-decoration: line-through; }
+.calendar-event.ended { cursor: default; border-left-color: #7d8796; color: #697486; background: #f0f2f5; opacity: .82; }
 .mobile-calendar-days { display: none; }
 .agenda-panel { overflow: hidden; }
 .agenda-panel > header { display: flex; gap: 11px; padding: 17px; border-bottom: 1px solid var(--soft-line); align-items: center; }
@@ -740,8 +741,8 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .calendar-page { overflow-x: hidden; }
   .calendar-main { overflow: hidden; }
   .calendar-toolbar { min-height: 58px; padding: 8px 11px; }
-  .calendar-toolbar > div > .button, .calendar-toolbar > div > .icon-button { display: none; }
-  .calendar-toolbar h2 { margin: 0; font-size: 15px; }
+  .calendar-toolbar .calendar-today { display: none; }
+  .calendar-toolbar h2 { margin-left: 3px; font-size: 13px; }
   .calendar-toolbar .view-select { height: 36px; padding: 0 10px; font-size: 10px; }
   .week-grid { display: none; }
   .mobile-calendar-days { display: grid; }
@@ -756,6 +757,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .mobile-calendar-days > section > div > p { margin: 0; color: #9aa4b3; font-size: 10px; }
   .mobile-calendar-days > section > div > button { min-width: 0; padding: 9px; border: 0; border-left: 3px solid var(--event, var(--blue)); border-radius: 8px; color: #27364c; background: color-mix(in srgb, var(--event, var(--blue)) 10%, white); display: grid; grid-template-columns: 45px minmax(0, 1fr) 20px; gap: 7px; align-items: center; text-align: left; }
   .mobile-calendar-days > section > div > button.cancelled { border-left-color: #b74757; color: #8f3947; background: #fff0f2; opacity: .8; }.mobile-calendar-days button.cancelled b { text-decoration: line-through; }.calendar-cancelled-mark { color: #b74757; font-size: 20px; font-weight: 800; text-align: center; }
+  .mobile-calendar-days > section > div > button.ended { border-left-color: #7d8796; color: #697486; background: #f0f2f5; opacity: .82; }
   .mobile-calendar-days time { color: #64748b; font-size: 9px; font-weight: 700; }.mobile-calendar-days button > span { min-width: 0; display: grid; gap: 2px; }.mobile-calendar-days button b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }.mobile-calendar-days button small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #7c889b; font-size: 8.5px; }.mobile-calendar-days button svg { color: var(--event, var(--blue)); }
   .directory-stats { grid-template-columns: repeat(3, 1fr); }
   .directory-stats > div { padding: 10px; }
@@ -826,6 +828,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .meeting-chat-composer button { width: 31px; height: 31px; border: 0; border-radius: 6px; color: white; background: var(--blue); display: grid; place-items: center; }
 .meeting-enable-audio { position: absolute; z-index: 4; top: 12px; left: 50%; transform: translateX(-50%); min-width: max-content; padding: 9px 13px; border: 1px solid rgba(255,255,255,.25); border-radius: 20px; color: white; background: rgba(12,23,39,.86); display: flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 800; box-shadow: 0 8px 24px rgba(0,0,0,.24); }
 .meeting-controls { padding: 8px 20px; border-top: 1px solid rgba(255,255,255,.08); background: #131d2d; display: grid; grid-template-columns: 100px 1fr 100px; align-items: center; }
+.meeting-controls.organizer-controls { grid-template-columns: 100px 1fr 210px; }
 .meeting-info { display: grid; }.meeting-info span { font-size: 15px; font-weight: 800; }.meeting-info small { color: #8d9bb0; font-size: 8px; }
 .meeting-main-controls { display: flex; justify-content: center; gap: 7px; }
 .meeting-main-controls > button { min-width: 58px; border: 0; color: #d6dfeb; background: transparent; display: grid; justify-items: center; gap: 4px; }
@@ -833,8 +836,14 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .meeting-main-controls > button:hover > span, .meeting-main-controls > button.active > span { color: white; background: #3b4a61; }
 .meeting-main-controls > button.active:first-child > span, .meeting-main-controls > button:nth-child(2).active > span { background: #b93545; }
 .meeting-main-controls small { color: #aab5c6; font-size: 7.5px; white-space: nowrap; }
-.leave-meeting { height: 42px; border: 0; border-radius: 20px; color: white; background: #d33d4f; display: flex; align-items: center; justify-content: center; gap: 7px; font-weight: 800; }
-.mobile-leave { display: none; }
+.meeting-exit-actions { display: flex; justify-content: flex-end; gap: 7px; }
+.leave-meeting, .end-meeting-for-all { height: 42px; border: 0; border-radius: 20px; color: white; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0 14px; font-size: 9px; font-weight: 800; white-space: nowrap; }
+.leave-meeting { background: #566276; }
+.end-meeting-for-all { background: #d33d4f; }
+.mobile-leave, .mobile-end-for-all { display: none; }
+.end-meeting-confirm { padding: 24px; text-align: center; }
+.end-meeting-confirm > svg { color: #cf3548; }
+.end-meeting-confirm h3 { margin: 10px 0 6px; font-size: 15px; }.end-meeting-confirm p { margin: 0 0 20px; color: #738095; font-size: 10px; }.end-meeting-confirm .modal-actions { justify-content: center; }
 
 @media (max-width: 800px) {
   .meeting-room { height: 100dvh; grid-template-rows: 58px minmax(0, 1fr) calc(82px + env(safe-area-inset-bottom)); }
@@ -848,6 +857,7 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .meeting-info, .desktop-leave { display: none; }.meeting-main-controls { width: 100%; justify-content: center; gap: 0; overflow: visible; }
   .meeting-main-controls > button { min-width: 0; flex: 1 1 0; padding: 0; }.meeting-main-controls > button > span { width: 34px; height: 34px; }
   .meeting-main-controls small { font-size: 6.5px; }.meeting-main-controls .mobile-leave { border: 0; color: #d6dfeb; background: transparent; display: grid; justify-items: center; gap: 4px; }.meeting-main-controls .mobile-leave > span { color: white; background: #df4053; }.meeting-main-controls .mobile-leave small { color: #d6dfeb; }
+  .meeting-main-controls .mobile-end-for-all { border: 0; color: #d6dfeb; background: transparent; display: grid; justify-items: center; gap: 4px; }.meeting-main-controls .mobile-end-for-all > span { color: white; background: #a72435; }.meeting-main-controls .mobile-end-for-all small { color: #ffbcc5; }
   .meeting-controls { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
   .video-call .meeting-grid.participants-2 { position: relative; display: block; }
   .video-call .meeting-grid.participants-2 .meeting-tile:nth-child(2) { width: 100%; height: 100%; }

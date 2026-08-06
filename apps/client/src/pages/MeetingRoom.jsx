@@ -5,11 +5,13 @@ import {
 } from "lucide-react";
 import { io } from "socket.io-client";
 import { api, SOCKET_URL, socketOptions } from "../lib/api";
+import { Modal } from "../components/Modal";
 
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
-export function MeetingRoom({ meeting, user, onLeave, onToast }) {
+export function MeetingRoom({ meeting, user, onLeave, onEndMeeting, onToast }) {
   const isAudioOnly = meeting.meeting_mode === "audio";
+  const isOrganizer = meeting.organizer_id === user.id;
   const [participants, setParticipants] = useState([]);
   const [localStream, setLocalStream] = useState(null);
   const [micOn, setMicOn] = useState(true);
@@ -22,6 +24,8 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
   const [chatMessage, setChatMessage] = useState("");
   const [status, setStatus] = useState("Connecting securely…");
   const [elapsed, setElapsed] = useState("00:00");
+  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [ending, setEnding] = useState(false);
   const localVideoRef = useRef();
   const localStreamRef = useRef();
   const displayStreamRef = useRef();
@@ -136,6 +140,10 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
         onToast(body || "This meeting was cancelled by the organizer.");
         window.setTimeout(onLeave, 1800);
       });
+      socket.on("meeting:ended", ({ message }) => {
+        onToast(message || "The organizer ended this meeting.");
+        window.setTimeout(onLeave, 900);
+      });
       socket.on("connect", () => {
         setStatus("Connecting securely...");
         socket.emit("meeting:join", { roomId: meeting.id }, async (response) => {
@@ -230,6 +238,18 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
     navigator.clipboard.writeText(url.toString()).then(() => onToast("Internal meeting link copied"));
   }
 
+  async function endForEveryone() {
+    setEnding(true);
+    try {
+      await onEndMeeting(meeting);
+      setConfirmEnd(false);
+    } catch (error) {
+      onToast(error.message);
+    } finally {
+      setEnding(false);
+    }
+  }
+
   const allParticipants = [{ socketId: "local", user, stream: localStream, raised, local: true }, ...participants];
 
   return (
@@ -252,21 +272,23 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
           </div><form className="meeting-chat-composer" onSubmit={sendChat}><input value={chatMessage} onChange={(event) => setChatMessage(event.target.value)} placeholder="Message everyone" /><button><Send size={17} /></button></form></>}
         </aside>}
       </main>
-      <footer className="meeting-controls">
+      <footer className={`meeting-controls ${isOrganizer ? "organizer-controls" : ""}`}>
         <div className="meeting-info"><span>{allParticipants.length}</span><small>participants</small></div>
         <div className="meeting-main-controls">
           <MeetingControl active={!micOn} onClick={toggleMic} icon={micOn ? Mic : MicOff} label={micOn ? "Mute" : "Unmute"} />
           {isAudioOnly && <MeetingControl active={!speakerOn} onClick={() => setSpeakerOn((enabled) => !enabled)} icon={speakerOn ? Volume2 : VolumeX} label={speakerOn ? "Speaker" : "Sound off"} />}
           {!isAudioOnly && <MeetingControl active={!cameraOn} onClick={toggleCamera} icon={cameraOn ? Video : VideoOff} label={cameraOn ? "Camera" : "Start video"} />}
-          <button className="mobile-leave" onClick={onLeave}><span><PhoneOff size={20} /></span><small>End</small></button>
+          <button className="mobile-leave" onClick={onLeave}><span><PhoneOff size={20} /></span><small>Leave</small></button>
+          {isOrganizer && <button className="mobile-end-for-all" onClick={() => setConfirmEnd(true)}><span><PhoneOff size={20} /></span><small>End for all</small></button>}
           {!isAudioOnly && <MeetingControl active={screenOn} onClick={shareScreen} icon={MonitorUp} label={screenOn ? "Stop sharing" : "Share screen"} />}
           <MeetingControl active={raised} onClick={toggleHand} icon={Hand} label={raised ? "Lower hand" : "Raise hand"} />
           <MeetingControl active={panel === "chat"} onClick={() => setPanel(panel === "chat" ? null : "chat")} icon={MessageSquareText} label="Chat" />
           <MeetingControl active={panel === "people"} onClick={() => setPanel(panel === "people" ? null : "people")} icon={Users} label="People" />
           <MeetingControl onClick={() => document.documentElement.requestFullscreen?.()} icon={Expand} label="Full screen" />
         </div>
-        <button className="leave-meeting desktop-leave" onClick={onLeave}><PhoneOff size={20} /><span>Leave</span></button>
+        <div className="meeting-exit-actions desktop-leave"><button className="leave-meeting" onClick={onLeave}><PhoneOff size={18} /><span>Leave</span></button>{isOrganizer && <button className="end-meeting-for-all" onClick={() => setConfirmEnd(true)}><PhoneOff size={18} /><span>End for all</span></button>}</div>
       </footer>
+      {confirmEnd && <Modal title="End meeting for everyone?" subtitle={meeting.title} onClose={() => !ending && setConfirmEnd(false)}><div className="end-meeting-confirm"><PhoneOff size={28} /><h3>Everyone will be disconnected</h3><p>Participants will not be able to rejoin this meeting after you end it.</p><div className="modal-actions"><button className="button button-secondary" onClick={() => setConfirmEnd(false)} disabled={ending}>Keep meeting open</button><button className="button button-danger" onClick={endForEveryone} disabled={ending}><PhoneOff size={16} /> {ending ? "Ending…" : "End for everyone"}</button></div></div></Modal>}
     </div>
   );
 }

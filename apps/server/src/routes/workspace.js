@@ -860,6 +860,38 @@ workspaceRouter.post("/meetings/instant", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+workspaceRouter.post("/meetings/:eventId/end", async (req, res, next) => {
+  try {
+    const eventId = z.string().uuid().parse(req.params.eventId);
+    const [meeting] = await sql`
+      SELECT id, title, organizer_id, ended_at
+      FROM events
+      WHERE id = ${eventId} AND organization_id = ${req.auth.organizationId} AND is_online = TRUE
+    `;
+    if (!meeting) return res.status(404).json({ error: "Meeting not found" });
+    if (meeting.organizer_id !== req.auth.userId) {
+      return res.status(403).json({ error: "Only the meeting organizer can end the meeting for everyone" });
+    }
+    if (meeting.ended_at) return res.json({ meeting, message: "This meeting has already ended" });
+
+    const [ended] = await sql`
+      UPDATE events
+      SET ended_at = NOW(), ended_by = ${req.auth.userId},
+          ends_at = GREATEST(starts_at + INTERVAL '1 minute', LEAST(ends_at, NOW()))
+      WHERE id = ${eventId} AND ended_at IS NULL
+      RETURNING *
+    `;
+    const room = `meeting:${eventId}`;
+    req.app.get("io")?.to(room).emit("meeting:ended", {
+      event_id: eventId,
+      message: `${meeting.title} was ended by the organizer.`
+    });
+    req.app.get("io")?.in(room).socketsLeave(room);
+    invalidateCache(`events:${req.auth.organizationId}`);
+    res.json({ meeting: ended, message: "Meeting ended for everyone" });
+  } catch (error) { next(error); }
+});
+
 workspaceRouter.delete("/events/:eventId", async (req, res, next) => {
   try {
     const eventId = z.string().uuid().parse(req.params.eventId);

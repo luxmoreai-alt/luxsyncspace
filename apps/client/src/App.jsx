@@ -127,6 +127,12 @@ export default function App() {
     refreshWorkspace().catch(() => {});
   }
 
+  async function endMeetingForEveryone(meeting) {
+    const result = await api(`/meetings/${meeting.id}/end`, { method: "POST" });
+    setToast(result.message || "Meeting ended for everyone");
+    leaveMeeting();
+  }
+
   async function startInstantMeeting(options = {}) {
     try {
       const meeting = await api("/meetings/instant", {
@@ -171,7 +177,7 @@ export default function App() {
   if (user.must_change_password) return <ChangePassword user={user} onLogout={logout} onChanged={() => { setUser((current) => ({ ...current, must_change_password: false })); setToast("Password updated successfully"); }} />;
   if (meetingId) {
     const meeting = activeMeeting || data.events.find((event) => event.id === meetingId) || { id: meetingId, title: "LuxSyncspace meeting", meeting_mode: "video" };
-    return <><MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onToast={setToast} /><Toast message={toast} onClose={() => setToast("")} /></>;
+    return <><MeetingRoom meeting={meeting} user={user} onLeave={leaveMeeting} onEndMeeting={endMeetingForEveryone} onToast={setToast} /><Toast message={toast} onClose={() => setToast("")} /></>;
   }
 
   const pageProps = { user, data, navigate: setActive, onNewEvent: () => setNewEvent(true), onRefresh: refreshWorkspace, onToast: setToast, onJoinMeeting: joinMeeting, onStartMeeting: startInstantMeeting };
