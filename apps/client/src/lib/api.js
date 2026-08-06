@@ -3,6 +3,18 @@ const LEGACY_TOKEN_KEY = "synapse_token";
 const configuredApiUrl = String(import.meta.env.VITE_API_URL || "").replace(/\/+$/, "");
 export const API_BASE = configuredApiUrl || "/api";
 export const SOCKET_URL = String(import.meta.env.VITE_SOCKET_URL || "").replace(/\/+$/, "") || undefined;
+export function socketOptions() {
+  return {
+    auth: { token: authStore.get() },
+    transports: ["websocket"],
+    upgrade: false,
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 750,
+    reconnectionDelayMax: 5000,
+    timeout: 12000
+  };
+}
 
 export function apiUrl(path = "") {
   return `${API_BASE}${path.startsWith("/") ? path : `/${path}`}`;

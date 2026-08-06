@@ -1,11 +1,14 @@
 import { useEffect } from "react";
 import { io } from "socket.io-client";
-import { authStore, SOCKET_URL } from "../lib/api";
-import { showWorkspaceNotification } from "../lib/notifications";
+import { SOCKET_URL, socketOptions } from "../lib/api";
+import { primeNotificationAudio, showWorkspaceNotification } from "../lib/notifications";
 
 export function NotificationBridge({ user, channels, onRefresh, onIncomingCall }) {
   useEffect(() => {
-    const socket = io(SOCKET_URL, { auth: { token: authStore.get() } });
+    const unlockAudio = () => { primeNotificationAudio().catch(() => {}); };
+    window.addEventListener("pointerdown", unlockAudio, { once: true });
+    window.addEventListener("keydown", unlockAudio, { once: true });
+    const socket = io(SOCKET_URL, socketOptions());
     socket.on("direct:message", (message) => {
       if (message.sender_id === user.id) return;
       if (/^(Voice|Video) call:/.test(message.body || "")) return;
@@ -39,6 +42,8 @@ export function NotificationBridge({ user, channels, onRefresh, onIncomingCall }
       onIncomingCall(call);
     });
     return () => {
+      window.removeEventListener("pointerdown", unlockAudio);
+      window.removeEventListener("keydown", unlockAudio);
       socket.disconnect();
     };
   }, [user.id, channels, onRefresh, onIncomingCall]);

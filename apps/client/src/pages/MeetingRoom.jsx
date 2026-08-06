@@ -4,7 +4,7 @@ import {
   Send, Users, Video, VideoOff, Volume2, VolumeX, X
 } from "lucide-react";
 import { io } from "socket.io-client";
-import { api, authStore, SOCKET_URL } from "../lib/api";
+import { api, SOCKET_URL, socketOptions } from "../lib/api";
 
 const DEFAULT_ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -99,8 +99,15 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
       setLocalStream(stream);
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-      const socket = io(SOCKET_URL, { auth: { token: authStore.get() } });
+      const socket = io(SOCKET_URL, socketOptions());
       socketRef.current = socket;
+      socket.on("connect_error", () => setStatus("Realtime connection unavailable. Retrying..."));
+      socket.on("disconnect", () => {
+        setStatus("Reconnecting securely...");
+        peersRef.current.forEach((peer) => peer.close());
+        peersRef.current.clear();
+        setParticipants([]);
+      });
       socket.on("meeting:user-joined", ({ socketId, user: participantUser }) => {
         upsertParticipant(socketId, { user: participantUser });
       });
@@ -125,19 +132,22 @@ export function MeetingRoom({ meeting, user, onLeave, onToast }) {
       });
       socket.on("meeting:chat", (incoming) => setChat((current) => [...current, incoming]));
       socket.on("meeting:hand", ({ socketId, raised: isRaised }) => upsertParticipant(socketId, { raised: isRaised }));
-      socket.emit("meeting:join", { roomId: meeting.id }, async (response) => {
-        if (!response?.ok) {
-          setStatus(response?.error || "Could not join meeting");
-          return;
-        }
-        setStatus("Connected");
-        for (const participant of response.participants) {
-          upsertParticipant(participant.socketId, { user: participant.user });
-          const peer = createPeer(participant.socketId, participant.user);
-          const offer = await peer.createOffer();
-          await peer.setLocalDescription(offer);
-          socket.emit("meeting:signal", { target: participant.socketId, signal: { offer: peer.localDescription } });
-        }
+      socket.on("connect", () => {
+        setStatus("Connecting securely...");
+        socket.emit("meeting:join", { roomId: meeting.id }, async (response) => {
+          if (!response?.ok) {
+            setStatus(response?.error || "Could not join meeting");
+            return;
+          }
+          setStatus("Connected");
+          for (const participant of response.participants) {
+            upsertParticipant(participant.socketId, { user: participant.user });
+            const peer = createPeer(participant.socketId, participant.user);
+            const offer = await peer.createOffer();
+            await peer.setLocalDescription(offer);
+            socket.emit("meeting:signal", { target: participant.socketId, signal: { offer: peer.localDescription } });
+          }
+        });
       });
     }
 

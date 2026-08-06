@@ -1,6 +1,27 @@
 import { api } from "./api";
 
 const ENABLED_KEY = "luxsyncspace_notifications_enabled";
+let sharedAudioContext = null;
+
+function getAudioContext() {
+  const AudioContext = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContext) return null;
+  if (!sharedAudioContext || sharedAudioContext.state === "closed") {
+    sharedAudioContext = new AudioContext();
+  }
+  return sharedAudioContext;
+}
+
+export async function primeNotificationAudio() {
+  const context = getAudioContext();
+  if (!context) return false;
+  try {
+    if (context.state !== "running") await context.resume();
+    return context.state === "running";
+  } catch {
+    return false;
+  }
+}
 
 export function notificationsSupported() {
   return "Notification" in window && "serviceWorker" in navigator;
@@ -58,8 +79,8 @@ function urlBase64ToUint8Array(value) {
 }
 
 export async function showWorkspaceNotification(title, body, tag = "luxsyncspace", sound = "message") {
-  if (!notificationsEnabled()) return;
   await playNotificationSound(sound).catch(() => {});
+  if (!notificationsEnabled()) return;
   if (document.visibilityState === "visible") return;
   const registration = await navigator.serviceWorker.ready;
   await registration.showNotification(title, {
@@ -74,16 +95,8 @@ export async function showWorkspaceNotification(title, body, tag = "luxsyncspace
 }
 
 export async function playNotificationSound(sound = "message") {
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  let context;
-  try {
-    context = new AudioContext();
-    await context.resume();
-  } catch {
-    context?.close().catch(() => {});
-    return;
-  }
+  const context = getAudioContext();
+  if (!context || !(await primeNotificationAudio())) return;
   const gain = context.createGain();
   gain.connect(context.destination);
   gain.gain.setValueAtTime(0.0001, context.currentTime);
@@ -102,23 +115,15 @@ export async function playNotificationSound(sound = "message") {
     oscillator.start(context.currentTime + offset);
     oscillator.stop(context.currentTime + offset + (isMeeting ? 0.32 : 0.42));
   });
-  setTimeout(() => context.close(), (duration + 0.35) * 1000);
+  setTimeout(() => gain.disconnect(), (duration + 0.35) * 1000);
 }
 
 let activeRingtone = null;
 
 export async function startIncomingCallRingtone() {
   stopIncomingCallRingtone();
-  const AudioContext = window.AudioContext || window.webkitAudioContext;
-  if (!AudioContext) return;
-  let context;
-  try {
-    context = new AudioContext();
-    await context.resume();
-  } catch {
-    context?.close().catch(() => {});
-    return;
-  }
+  const context = getAudioContext();
+  if (!context || !(await primeNotificationAudio())) return;
   const master = context.createGain();
   master.gain.value = 0.22;
   master.connect(context.destination);
@@ -158,9 +163,9 @@ export function stopIncomingCallRingtone() {
   try {
     master.gain.cancelScheduledValues(context.currentTime);
     master.gain.setTargetAtTime(0.0001, context.currentTime, 0.025);
-    window.setTimeout(() => context.close().catch(() => {}), 120);
+    window.setTimeout(() => master.disconnect(), 120);
   } catch {
-    context.close().catch(() => {});
+    master.disconnect();
   }
   navigator.vibrate?.(0);
 }

@@ -50,7 +50,11 @@ app.use(compression());
 app.use(express.json({ limit: "1mb" }));
 if (process.env.NODE_ENV !== "production") app.use(morgan("dev"));
 
-app.get("/api/health", (_req, res) => res.json({ status: "ok", service: "luxsyncspace-api" }));
+app.get("/api/health", (_req, res) => res.json({
+  status: "ok",
+  service: "luxsyncspace-api",
+  realtime: config.redisUrl ? "redis-coordinated" : "single-instance"
+}));
 app.use("/api/auth", authRouter);
 app.use("/api", workspaceRouter);
 

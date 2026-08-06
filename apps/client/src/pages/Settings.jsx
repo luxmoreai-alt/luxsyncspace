@@ -126,7 +126,10 @@ export function Settings({ user, people, onToast, onRefresh }) {
               <section>
                 <span className="app-setting-icon"><Volume2 size={21} /></span>
                 <div><h3>LuxSyncspace notification sounds</h3><p>Messages use the LuxSyncspace chime, meetings use a separate reminder tone, and incoming calls ring repeatedly until answered or declined. Background notifications use the sound permitted by your operating system.</p></div>
-                <button className="button button-secondary" onClick={() => { playNotificationSound("meeting"); onToast("Playing meeting reminder sound"); }}>Test meeting sound</button>
+                <div className="sound-test-actions">
+                  <button className="button button-secondary" onClick={() => { playNotificationSound("message"); onToast("Playing message sound"); }}>Test message</button>
+                  <button className="button button-secondary" onClick={() => { playNotificationSound("meeting"); onToast("Playing meeting reminder sound"); }}>Test meeting</button>
+                </div>
               </section>
             </div>
           </>}

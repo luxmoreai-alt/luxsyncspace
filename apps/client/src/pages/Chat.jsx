@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, BriefcaseBusiness, Check, ChevronDown, Download, FileText, Hash, Info, Lock, MapPin, MessageSquareText, MoreHorizontal, Paperclip, Phone, Plus, Search, Send, Smile, Trash2, UserPlus, Users, Video, X } from "lucide-react";
 import { io } from "socket.io-client";
-import { api, apiUrl, authStore, SOCKET_URL } from "../lib/api";
+import { api, apiUrl, SOCKET_URL, socketOptions } from "../lib/api";
 import { Avatar } from "../components/Avatar";
 import { CreateGroup } from "../components/CreateGroup";
 import { ManageGroupMembers } from "../components/ManageGroupMembers";
@@ -57,7 +57,7 @@ export function Chat({ user, channels, people, onRefresh, onToast, initialChanne
   }, [activeChannel?.muted]);
 
   useEffect(() => {
-    socketRef.current = io(SOCKET_URL, { auth: { token: authStore.get() } });
+    socketRef.current = io(SOCKET_URL, socketOptions());
     socketRef.current.on("channel:message", (incoming) => setMessages((current) => current.some((item) => item.id === incoming.id) ? current : [...current, incoming]));
     socketRef.current.on("direct:message", (incoming) => {
       setMessages((current) => selectedPersonRef.current?.id === incoming.sender_id && !current.some((item) => item.id === incoming.id) ? [...current, incoming] : current);
