@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, Mail, MapPin, Pencil, Phone, Save, Search, Send, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -19,6 +19,19 @@ const emptyInvite = () => ({
   bio: ""
 });
 
+function getInstallEnvironment() {
+  const userAgent = window.navigator.userAgent || "";
+  const isIOS = /iPad|iPhone|iPod/i.test(userAgent) || (window.navigator.platform === "MacIntel" && window.navigator.maxTouchPoints > 1);
+  const isAndroid = /Android/i.test(userAgent);
+  const isMac = /Macintosh|Mac OS X/i.test(userAgent) && !isIOS;
+  const isSafari = /Safari/i.test(userAgent) && !/Chrome|CriOS|Edg|OPR|Firefox|FxiOS/i.test(userAgent);
+  return { isIOS, isAndroid, isMac, isSafari };
+}
+
+function appIsInstalled() {
+  return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+}
+
 export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onStartTutorial }) {
   const [tab, setTab] = useState("profile");
   const [selected, setSelected] = useState(null);
@@ -29,16 +42,27 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const [busy, setBusy] = useState(false);
   const [notificationsOn, setNotificationsOn] = useState(notificationsEnabled);
   const [installAvailable, setInstallAvailable] = useState(Boolean(window.__luxsyncspaceInstallPrompt));
+  const [isInstalled, setIsInstalled] = useState(appIsInstalled);
+  const [showInstallHelp, setShowInstallHelp] = useState(false);
   const [privacy, setPrivacy] = useState({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
-  const isInstalled = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
+  const installEnvironment = getInstallEnvironment();
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canDeleteEmployees = ["hr", "senior_leader"].includes(user.role);
   const filtered = people.filter((person) => `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
 
   useEffect(() => {
     const available = () => setInstallAvailable(true);
+    const installed = () => { setIsInstalled(true); setInstallAvailable(false); setShowInstallHelp(false); };
+    const displayMode = window.matchMedia("(display-mode: standalone)");
+    const updateDisplayMode = () => setIsInstalled(appIsInstalled());
     window.addEventListener("luxsyncspace:install-available", available);
-    return () => window.removeEventListener("luxsyncspace:install-available", available);
+    window.addEventListener("luxsyncspace:installed", installed);
+    displayMode.addEventListener?.("change", updateDisplayMode);
+    return () => {
+      window.removeEventListener("luxsyncspace:install-available", available);
+      window.removeEventListener("luxsyncspace:installed", installed);
+      displayMode.removeEventListener?.("change", updateDisplayMode);
+    };
   }, []);
 
   useEffect(() => {
@@ -76,13 +100,18 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
 
   async function installApp() {
     const prompt = window.__luxsyncspaceInstallPrompt;
-    if (!prompt) return;
+    if (!prompt) {
+      setShowInstallHelp(true);
+      return;
+    }
     await prompt.prompt();
     const choice = await prompt.userChoice;
+    window.__luxsyncspaceInstallPrompt = null;
+    setInstallAvailable(false);
     if (choice.outcome === "accepted") {
-      window.__luxsyncspaceInstallPrompt = null;
-      setInstallAvailable(false);
       onToast("LuxSyncspace installed");
+    } else {
+      onToast("Installation was cancelled. You can try again anytime.");
     }
   }
 
@@ -214,8 +243,8 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
             <div className="app-settings-list">
               <section>
                 <span className="app-setting-icon"><Download size={21} /></span>
-                <div><h3>Install LuxSyncspace</h3><p>Add the app to your phone home screen or desktop. It opens in its own app window and keeps essential files available offline.</p><small>{isInstalled ? "LuxSyncspace is installed on this device." : installAvailable ? "This device is ready to install." : "Use your browser’s Install app or Add to Home Screen menu if the button is unavailable."}</small></div>
-                <button className="button button-secondary" onClick={installApp} disabled={isInstalled || !installAvailable}>{isInstalled ? "Installed" : "Install app"}</button>
+                <div><h3>Install LuxSyncspace</h3><p>Add the app to your phone home screen or desktop. It opens in its own app window and keeps essential files available offline.</p><small>{isInstalled ? "LuxSyncspace is installed on this device." : installAvailable ? "This device is ready to install." : installEnvironment.isIOS ? "On iPhone and iPad, install from Safari’s Share menu." : installEnvironment.isMac && installEnvironment.isSafari ? "On Safari, add this app to your Dock." : "Install from your browser menu using the guided steps."}</small></div>
+                <button className="button button-secondary" onClick={installApp} disabled={isInstalled}>{isInstalled ? "Installed" : installAvailable ? "Install app" : "View install steps"}</button>
               </section>
               <section>
                 <span className="app-setting-icon"><Bell size={21} /></span>
@@ -259,8 +288,49 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button><button className="button button-danger" onClick={deleteEmployee} disabled={busy}>{busy ? "Deleting…" : "Delete employee"}</button></div>
         </div>
       </Modal>}
+      {showInstallHelp && <InstallHelp environment={installEnvironment} onClose={() => setShowInstallHelp(false)} />}
     </div>
   );
+}
+
+function InstallHelp({ environment, onClose }) {
+  let title = "Install on this device";
+  let note = "Use a current version of Chrome or Edge for the simplest installation experience.";
+  let steps = [
+    [MoreVertical, "Open the browser menu", "Look for the three-dot menu near the address bar."],
+    [Download, "Choose Install app", "It may also be named Add to Home screen or Apps > Install LuxSyncspace."],
+    [Smartphone, "Confirm installation", "Launch LuxSyncspace from your home screen, desktop, or app list."]
+  ];
+
+  if (environment.isIOS) {
+    title = "Install on iPhone or iPad";
+    note = environment.isSafari ? "Keep this page open in Safari and follow these steps." : "Open this page in Safari first. Other iPhone and iPad browsers may not show Apple’s web-app installation controls.";
+    steps = [
+      [Share2, "Tap Share in Safari", "Use the Share button in Safari’s toolbar."],
+      [PlusSquare, "Tap Add to Home Screen", "Scroll down if the option is not immediately visible."],
+      [Smartphone, "Turn on Open as Web App", "Tap Add, then launch LuxSyncspace from your Home Screen."]
+    ];
+  } else if (environment.isMac && environment.isSafari) {
+    title = "Install on Mac";
+    note = "Safari web apps require macOS Sonoma 14 or later. Chrome and Edge can also install from their browser menus.";
+    steps = [
+      [Share2, "Open Safari’s Share menu", "You can also use File in the Mac menu bar."],
+      [PlusSquare, "Choose Add to Dock", "Confirm the app name and icon."],
+      [Smartphone, "Open from the Dock", "LuxSyncspace will run in its own app window."]
+    ];
+  } else if (environment.isAndroid) {
+    title = "Install on Android";
+    note = "For best results, open this page in a current version of Chrome, Edge, or Samsung Internet.";
+  }
+
+  return <Modal title={title} subtitle="LuxSyncspace web app" onClose={onClose}>
+    <div className="install-help">
+      <div className="install-help-note"><Smartphone size={19} /><p>{note}</p></div>
+      <ol>{steps.map(([Icon, heading, description]) => <li key={heading}><span><Icon size={18} /></span><div><b>{heading}</b><small>{description}</small></div></li>)}</ol>
+      <p className="install-secure-note">Installation is available only when the app is opened from its secure HTTPS address. Private browsing or device-management restrictions can hide installation options.</p>
+      <div className="modal-actions"><button className="button button-primary" onClick={onClose}>Done</button></div>
+    </div>
+  </Modal>;
 }
 
 function ProfileDetails({ person, heading }) {

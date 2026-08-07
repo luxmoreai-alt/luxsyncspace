@@ -14,6 +14,11 @@ window.addEventListener("beforeinstallprompt", (event) => {
   window.dispatchEvent(new CustomEvent("luxsyncspace:install-available"));
 });
 
+window.addEventListener("appinstalled", () => {
+  window.__luxsyncspaceInstallPrompt = null;
+  window.dispatchEvent(new CustomEvent("luxsyncspace:installed"));
+});
+
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ErrorBoundary key="luxsyncspace-recovery-v1"><App /></ErrorBoundary>
