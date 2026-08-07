@@ -615,10 +615,14 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
 .profile-detail-grid span { display: grid; gap: 2px; min-width: 0; }.profile-detail-grid small { font-size: 8px; color: #939dab; }.profile-detail-grid b { color: #344056; font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
 .settings-search { max-width: 470px; margin: 14px 18px; }
 .employee-table { border-top: 1px solid var(--soft-line); }
-.employee-table > button { width: 100%; border: 0; border-bottom: 1px solid var(--soft-line); background: white; min-height: 63px; padding: 10px 19px; display: grid; grid-template-columns: 40px 1fr 1fr 100px 62px; align-items: center; gap: 10px; text-align: left; }
-.employee-table > button:hover { background: #fafbfe; }
-.employee-table > button > span:not(.avatar) { display: grid; gap: 2px; min-width: 0; }.employee-table b { font-size: 10px; }.employee-table small { color: #8c96a6; font-size: 8.5px; }
-.employee-table .employee-edit-hint { display: flex !important; align-items: center; justify-content: flex-end; gap: 4px; color: var(--blue); font-size: 9px; font-weight: 700; }
+.employee-row { min-height: 63px; border-bottom: 1px solid var(--soft-line); background: white; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; }
+.employee-row:hover { background: #fafbfe; }
+.employee-row-profile { min-width: 0; padding: 10px 8px 10px 19px; border: 0; background: transparent; display: grid; grid-template-columns: 40px minmax(120px, 1fr) minmax(150px, 1fr) 100px; align-items: center; gap: 10px; text-align: left; }
+.employee-row-profile > span:not(.avatar) { display: grid; gap: 2px; min-width: 0; }.employee-table b { font-size: 10px; }.employee-table small { color: #8c96a6; font-size: 8.5px; }
+.employee-row-actions { padding: 10px 19px 10px 8px; display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+.employee-row-actions button { height: 30px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; display: flex; align-items: center; gap: 4px; font-size: 9px; font-weight: 700; }
+.employee-row-edit { color: var(--blue); }.employee-row-edit:hover { background: var(--blue-soft); }
+.employee-row-delete { color: #bd3547; }.employee-row-delete:hover { background: #fff0f2; }
 .invite-settings-form { max-width: 800px; }
 .invite-settings-form > .button { justify-self: start; }
 .app-settings-list { display: grid; }
@@ -835,8 +839,11 @@ h1, h2, h3, .brand, .login-brand { font-family: "Manrope", sans-serif; }
   .settings-nav { display: flex; overflow-x: auto; }
   .settings-nav button { white-space: nowrap; }
   .profile-detail-grid { grid-template-columns: 1fr; }
-  .employee-table > button { grid-template-columns: 38px 1fr 62px; }
-  .employee-table > button > span:nth-child(3), .employee-table > button > span:nth-child(4) { display: none; }
+  .employee-row-profile { padding-left: 14px; grid-template-columns: 38px minmax(100px, 1fr); }
+  .employee-row-profile .employee-role-details, .employee-row-profile .role-chip { display: none; }
+  .employee-row-actions { padding-right: 10px; }
+  .employee-row-actions button { width: 31px; padding: 0; justify-content: center; }
+  .employee-row-actions button { font-size: 0; }
   .app-settings-list > section { grid-template-columns: 41px 1fr; }
   .app-settings-list > section .button { grid-column: 1 / 3; width: 100%; }
   .sound-test-actions { grid-column: 1 / 3; width: 100%; }

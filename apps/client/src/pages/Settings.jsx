@@ -181,7 +181,18 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
             <header className="settings-section-head"><div><h2>Employee profiles</h2><p>View company identity, designation, team, and contact details.</p></div></header>
             <label className="section-search settings-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by employee ID, name, or designation" /></label>
             <div className="employee-table">
-              {filtered.map((person) => <button key={person.id} onClick={() => setSelected(person)}><Avatar person={person} /><span><b>{person.full_name}</b><small>{person.employee_id}</small></span><span><b>{person.title}</b><small>{person.department}</small></span><span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span>{canEditEmployee(person) && <span className="employee-edit-hint"><Pencil size={13} /> Edit</span>}</button>)}
+              {filtered.map((person) => <div className="employee-row" key={person.id}>
+                <button className="employee-row-profile" onClick={() => setSelected(person)} aria-label={`View ${person.full_name}'s profile`}>
+                  <Avatar person={person} />
+                  <span><b>{person.full_name}</b><small>{person.employee_id}</small></span>
+                  <span className="employee-role-details"><b>{person.title}</b><small>{person.department}</small></span>
+                  <span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span>
+                </button>
+                {(canEditEmployee(person) || canDeleteEmployee(person)) && <div className="employee-row-actions">
+                  {canEditEmployee(person) && <button className="employee-row-edit" onClick={() => { setSelected(person); startEditing(person); }} aria-label={`Edit ${person.full_name}`}><Pencil size={13} /> Edit</button>}
+                  {canDeleteEmployee(person) && <button className="employee-row-delete" onClick={() => setPendingDelete(person)} aria-label={`Delete ${person.full_name}`}><UserX size={13} /> Delete</button>}
+                </div>}
+              </div>)}
             </div>
           </>}
           {tab === "invite" && canInvite && <>
