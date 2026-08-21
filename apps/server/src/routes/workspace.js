@@ -5,7 +5,7 @@ import multer from "multer";
 import { z } from "zod";
 import { sql } from "../db/client.js";
 import { requireAuth } from "../middleware/auth.js";
-import { sendEmployeeInvitation, sendSupportRequest } from "../services/email.js";
+import { sendEmployeeInvitation, sendPasswordResetCompleted, sendSupportRequest } from "../services/email.js";
 import { config } from "../config.js";
 import { sendPushToChannel, sendPushToOrganization, sendPushToUser } from "../services/push.js";
 import { cached, invalidateCache } from "../services/cache.js";
@@ -163,6 +163,51 @@ const groupRoles = new Set(["hr", "senior_leader", "manager", "team_lead"]);
 const announcementRoles = new Set(["hr", "senior_leader"]);
 const inviteRoles = new Set(["hr", "senior_leader", "manager"]);
 const workforceRoles = new Set(["hr", "senior_leader"]);
+
+workspaceRouter.get("/password-reset-requests", async (req, res, next) => {
+  try {
+    if (await currentRole(req.auth.userId) !== "senior_leader") return res.status(403).json({ error: "Only the administrator can view password reset requests" });
+    const requests = await sql`
+      SELECT request.id, request.status, request.requested_at, request.completed_at,
+             employee.id AS user_id, employee.full_name, employee.email, employee.employee_id,
+             employee.title, employee.department
+      FROM password_reset_requests request
+      JOIN users employee ON employee.id = request.user_id
+      WHERE request.organization_id = ${req.auth.organizationId}
+      ORDER BY CASE WHEN request.status = 'pending' THEN 0 ELSE 1 END, request.requested_at DESC
+      LIMIT 100
+    `;
+    res.json({ requests });
+  } catch (error) { next(error); }
+});
+
+workspaceRouter.post("/employees/:id/password-reset", async (req, res, next) => {
+  try {
+    if (await currentRole(req.auth.userId) !== "senior_leader") return res.status(403).json({ error: "Only the administrator can reset employee passwords" });
+    const employeeId = z.string().uuid().parse(req.params.id);
+    if (employeeId === req.auth.userId) return res.status(400).json({ error: "Use your account security settings to change your own password" });
+    const [employee] = await sql`
+      SELECT id, email, full_name, password_hash, must_change_password FROM users
+      WHERE id = ${employeeId} AND organization_id = ${req.auth.organizationId} AND employment_status = 'active'
+    `;
+    if (!employee) return res.status(404).json({ error: "Active employee not found" });
+    const temporaryPassword = `Ls!${crypto.randomBytes(9).toString("base64url")}7`;
+    const passwordHash = await bcrypt.hash(temporaryPassword, 12);
+    await sql`UPDATE users SET password_hash = ${passwordHash}, must_change_password = TRUE WHERE id = ${employee.id}`;
+    try {
+      await sendPasswordResetCompleted({ to: employee.email, fullName: employee.full_name, temporaryPassword });
+    } catch (emailError) {
+      await sql`UPDATE users SET password_hash = ${employee.password_hash}, must_change_password = ${employee.must_change_password} WHERE id = ${employee.id}`;
+      throw Object.assign(new Error("The reset email could not be delivered, so the employee password was not changed."), { status: 502, cause: emailError });
+    }
+    await sql`
+      UPDATE password_reset_requests SET status = 'completed', completed_at = NOW(), completed_by = ${req.auth.userId}
+      WHERE user_id = ${employee.id} AND organization_id = ${req.auth.organizationId} AND status = 'pending'
+    `;
+    req.app.get("io")?.in(`user:${employee.id}`).disconnectSockets(true);
+    res.json({ message: `${employee.full_name}'s password was reset and a temporary password was emailed.` });
+  } catch (error) { next(error); }
+});
 
 workspaceRouter.patch("/presence", async (req, res, next) => {
   try {

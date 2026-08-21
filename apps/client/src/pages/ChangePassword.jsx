@@ -31,7 +31,7 @@ export function ChangePassword({ user, onChanged, onLogout }) {
         <span className="invite-check"><KeyRound size={24} /></span>
         <span className="eyebrow">SECURITY REQUIRED</span>
         <h1>Create your private password</h1>
-        <p>Welcome, {user.full_name}. The password in your invitation email is temporary and can only be used for initial access.</p>
+        <p>Welcome, {user.full_name}. The password sent to your email is temporary and can only be used for this sign-in.</p>
         <form className="event-form invite-form" onSubmit={submit}>
           <label><span>Temporary password</span><PasswordControl visible={visible.current} onToggle={() => setVisible({ ...visible, current: !visible.current })} value={form.currentPassword} onChange={(e) => update("currentPassword", e.target.value)} /></label>
           <label><span>New password</span><PasswordControl visible={visible.next} onToggle={() => setVisible({ ...visible, next: !visible.next })} value={form.newPassword} onChange={(e) => update("newPassword", e.target.value)} minLength={12} /><small>At least 12 characters with uppercase, lowercase, number, and special character.</small></label>

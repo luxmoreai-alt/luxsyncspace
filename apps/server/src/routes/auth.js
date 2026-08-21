@@ -38,6 +38,25 @@ authRouter.post("/login", async (req, res, next) => {
   }
 });
 
+authRouter.post("/forgot-password", async (req, res, next) => {
+  try {
+    const { email } = z.object({ email: z.string().email() }).parse(req.body);
+    const [user] = await sql`
+      SELECT id, organization_id FROM users
+      WHERE lower(email) = lower(${email}) AND employment_status = 'active'
+    `;
+    if (user) {
+      await sql`
+        INSERT INTO password_reset_requests (organization_id, user_id)
+        VALUES (${user.organization_id}, ${user.id})
+        ON CONFLICT (user_id) WHERE status = 'pending'
+        DO UPDATE SET requested_at = NOW()
+      `;
+    }
+    res.json({ message: "Your password reset request has been sent to the administrator. You will receive an email once it is completed." });
+  } catch (error) { next(error); }
+});
+
 authRouter.get("/me", requireAuth, async (req, res) => {
   const [user] = await sql`
     SELECT u.id, u.employee_id, u.email, u.full_name, u.title, u.department, u.role, u.phone, u.location,

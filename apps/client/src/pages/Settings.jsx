@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -37,6 +37,9 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const [selected, setSelected] = useState(null);
   const [editing, setEditing] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingReset, setPendingReset] = useState(null);
+  const [resetRequests, setResetRequests] = useState([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [invite, setInvite] = useState(emptyInvite);
   const [busy, setBusy] = useState(false);
@@ -48,6 +51,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const installEnvironment = getInstallEnvironment();
   const canInvite = ["hr", "manager", "senior_leader"].includes(user.role);
   const canDeleteEmployees = ["hr", "senior_leader"].includes(user.role);
+  const isAdministrator = user.role === "senior_leader";
   const filtered = people.filter((person) => `${person.full_name} ${person.employee_id} ${person.title} ${person.department}`.toLowerCase().includes(query.toLowerCase()));
 
   useEffect(() => {
@@ -68,6 +72,32 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   useEffect(() => {
     setPrivacy({ displayName: user.display_name || "", hideFullName: Boolean(user.hide_full_name), hideEmail: Boolean(user.hide_email) });
   }, [user.display_name, user.hide_full_name, user.hide_email]);
+
+  useEffect(() => {
+    if (tab !== "password-resets" || !isAdministrator) return;
+    loadResetRequests();
+  }, [tab, isAdministrator]);
+
+  async function loadResetRequests() {
+    setRequestsLoading(true);
+    try {
+      const result = await api("/password-reset-requests");
+      setResetRequests(result.requests || []);
+    } catch (error) { onToast(error.message); }
+    finally { setRequestsLoading(false); }
+  }
+
+  async function resetEmployeePassword() {
+    if (!pendingReset) return;
+    setBusy(true);
+    try {
+      const result = await api(`/employees/${pendingReset.id || pendingReset.user_id}/password-reset`, { method: "POST" });
+      setPendingReset(null);
+      await loadResetRequests();
+      onToast(result.message);
+    } catch (error) { onToast(error.message); }
+    finally { setBusy(false); }
+  }
 
   async function savePrivacy(event) {
     event.preventDefault();
@@ -194,6 +224,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <button className={tab === "profile" ? "active" : ""} onClick={() => setTab("profile")}><UserRound size={18} /> My profile</button>
           <button className={tab === "employees" ? "active" : ""} onClick={() => setTab("employees")}><Users size={18} /> Employee profiles</button>
           {canInvite && <button className={tab === "invite" ? "active" : ""} onClick={() => setTab("invite")}><Send size={18} /> Invite employees</button>}
+          {isAdministrator && <button className={tab === "password-resets" ? "active" : ""} onClick={() => setTab("password-resets")}><KeyRound size={18} /> Password resets</button>}
           <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}><Smartphone size={18} /> App & notifications</button>
         </aside>
         <section className="settings-content panel">
@@ -218,6 +249,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
                   <span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span>
                 </button>
                 {(canEditEmployee(person) || canDeleteEmployee(person)) && <div className="employee-row-actions">
+                  {isAdministrator && person.id !== user.id && canEditEmployee(person) && <button className="employee-row-reset" onClick={() => setPendingReset(person)} aria-label={`Reset ${person.full_name}'s password`}><KeyRound size={13} /> Reset password</button>}
                   {canEditEmployee(person) && <button className="employee-row-edit" onClick={() => { setSelected(person); startEditing(person); }} aria-label={`Edit ${person.full_name}`}><Pencil size={13} /> Edit</button>}
                   {canDeleteEmployee(person) && <button className="employee-row-delete" onClick={() => setPendingDelete(person)} aria-label={`Delete ${person.full_name}`}><UserX size={13} /> Delete</button>}
                 </div>}
@@ -237,6 +269,19 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
               <div className="email-delivery-note"><ShieldCheck size={18} /><span><b>Secure email delivery</b><small>The employee will receive their email as username and a generated temporary password. They must replace it after signing in.</small></span></div>
               <button className="button button-primary" disabled={busy}><Send size={17} /> {busy ? "Creating account and sending…" : "Send employee invitation"}</button>
             </form>
+          </>}
+          {tab === "password-resets" && isAdministrator && <>
+            <header className="settings-section-head reset-section-head"><div><h2>Password reset requests</h2><p>Administrator-only requests submitted from the sign-in page.</p></div><button className="button button-secondary" onClick={loadResetRequests} disabled={requestsLoading}><RefreshCw size={15} /> Refresh</button></header>
+            <div className="reset-request-list">
+              {requestsLoading && !resetRequests.length && <div className="reset-list-empty">Loading password reset requests…</div>}
+              {!requestsLoading && !resetRequests.length && <div className="reset-list-empty"><KeyRound size={25} /><b>No password reset requests</b><p>New employee requests will appear here.</p></div>}
+              {resetRequests.map((request) => <section className="reset-request-row" key={request.id}>
+                <div className="reset-request-icon"><KeyRound size={18} /></div>
+                <div><h3>{request.full_name}</h3><p>{request.employee_id} · {request.email}</p><small>Requested {new Date(request.requested_at).toLocaleString()}</small></div>
+                <span className={`reset-status reset-status-${request.status}`}>{request.status}</span>
+                {request.status === "pending" ? <button className="button button-primary" onClick={() => setPendingReset(request)}>Reset & email</button> : <small className="reset-completed-at">Completed {new Date(request.completed_at).toLocaleString()}</small>}
+              </section>)}
+            </div>
           </>}
           {tab === "app" && <>
             <header className="settings-section-head"><div><h2>App & notifications</h2><p>Install LuxSyncspace and choose how you receive new-message alerts.</p></div></header>
@@ -286,6 +331,14 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <h3>Deactivate and mark as deleted</h3>
           <p>The employee will be signed out and will no longer be able to access the workspace. Existing conversations and records will be preserved.</p>
           <div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingDelete(null)} disabled={busy}>Cancel</button><button className="button button-danger" onClick={deleteEmployee} disabled={busy}>{busy ? "Deleting…" : "Delete employee"}</button></div>
+        </div>
+      </Modal>}
+      {pendingReset && <Modal title={`Reset ${pendingReset.full_name}'s password?`} subtitle="Administrator password reset" onClose={() => !busy && setPendingReset(null)}>
+        <div className="employment-confirm password-reset-confirm">
+          <KeyRound size={30} />
+          <h3>Generate a temporary password</h3>
+          <p>The employee’s current password will stop working. A temporary password will be emailed to <b>{pendingReset.email}</b>, and they must create a new password after signing in.</p>
+          <div className="modal-actions"><button className="button button-secondary" onClick={() => setPendingReset(null)} disabled={busy}>Cancel</button><button className="button button-primary" onClick={resetEmployeePassword} disabled={busy}>{busy ? "Resetting and emailing…" : "Reset password & email"}</button></div>
         </div>
       </Modal>}
       {showInstallHelp && <InstallHelp environment={installEnvironment} onClose={() => setShowInstallHelp(false)} />}

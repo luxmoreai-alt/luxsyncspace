@@ -78,6 +78,43 @@ export async function sendEmployeeInvitation(details) {
   await transporter.sendMail(createEmployeeInvitationMessage(details));
 }
 
+export async function sendPasswordResetCompleted({ to, fullName, temporaryPassword }) {
+  const safeName = escapeHtml(fullName);
+  const safeEmail = escapeHtml(to);
+  const safePassword = escapeHtml(temporaryPassword);
+  const loginUrl = config.appUrl;
+  const logoUrl = `${config.appUrl.replace(/\/+$/, "")}/luxmor-logo.jpeg`;
+
+  await transporter.sendMail({
+    from: `"${config.appName}" <${config.smtp.fromEmail}>`,
+    to,
+    subject: `Your ${config.appName} password has been reset`,
+    text: [
+      `Hello ${fullName},`, "", "Your password reset request has been completed by an administrator.",
+      `Username: ${to}`, `Temporary password: ${temporaryPassword}`, `Sign in: ${loginUrl}`, "",
+      "You must create a new private password immediately after signing in.",
+      "Do not share this temporary password."
+    ].join("\n"),
+    html: `<!doctype html><html><body style="margin:0;background:#f4f6fa;font-family:Arial,sans-serif;color:#172033">
+      <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center">
+        <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border:1px solid #e2e7ef;border-radius:14px;overflow:hidden">
+          <tr><td align="center" style="padding:22px"><img src="${logoUrl}" width="300" alt="Luxmor AI Technologies" style="display:block;max-width:100%;height:auto"></td></tr>
+          <tr><td style="height:5px;background:#2557d6"></td></tr>
+          <tr><td style="padding:30px"><p style="color:#2557d6;font-size:12px;font-weight:700;letter-spacing:1px">PASSWORD RESET COMPLETE</p>
+            <h1 style="font-size:24px">Hello, ${safeName}</h1><p style="color:#5f6c80;line-height:1.6">An administrator has reset your ${config.appName} password.</p>
+            <table role="presentation" width="100%" style="background:#f4f7fc;border-radius:9px;padding:18px">
+              <tr><td style="padding:5px;color:#7c8798">Username</td><td style="padding:5px;font-weight:700">${safeEmail}</td></tr>
+              <tr><td style="padding:5px;color:#7c8798">Temporary password</td><td style="padding:5px;font-family:monospace;font-weight:700">${safePassword}</td></tr>
+            </table>
+            <p style="color:#6b7688;font-size:13px;line-height:1.5">Sign in with this temporary password. You will then be required to create a new private password.</p>
+            <a href="${loginUrl}" style="display:inline-block;padding:13px 22px;border-radius:8px;background:#2557d6;color:#fff;text-decoration:none;font-weight:700">Sign in to ${config.appName}</a>
+            <p style="margin-top:24px;color:#9aa3b1;font-size:11px">If you did not request this reset, contact your administrator immediately.</p>
+          </td></tr>
+        </table>
+      </td></tr></table></body></html>`
+  });
+}
+
 export async function sendSupportRequest({ user, category, subject, message }) {
   const safeName = escapeHtml(user.full_name);
   const safeEmail = escapeHtml(user.email);
