@@ -2,6 +2,14 @@ import { useState } from "react";
 import { Check, Lock, Search, Users } from "lucide-react";
 import { Modal } from "./Modal";
 
+function toChannelName(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 export function CreateGroup({ people, onCreate, onClose }) {
   const [form, setForm] = useState({ name: "", description: "", memberIds: [], isPrivate: false });
   const [busy, setBusy] = useState(false);
@@ -12,13 +20,13 @@ export function CreateGroup({ people, onCreate, onClose }) {
   async function submit(event) {
     event.preventDefault();
     setBusy(true);
-    try { await onCreate({ ...form, name: form.name.trim().toLowerCase().replace(/\s+/g, "-") }); }
+    try { await onCreate({ ...form, name: toChannelName(form.name) }); }
     finally { setBusy(false); }
   }
   return (
     <Modal title="Create a group" subtitle="Bring a project, department, or working team together" onClose={onClose}>
       <form className="event-form" onSubmit={submit}>
-        <label><span>Group name</span><input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. Mobile engineering" required /></label>
+        <label><span>Group name</span><input value={form.name} onChange={(e) => update("name", e.target.value)} placeholder="e.g. Mobile engineering" maxLength={60} required /></label>
         <label><span>Description</span><textarea value={form.description} onChange={(e) => update("description", e.target.value)} placeholder="What will this group work on?" /></label>
         <div className="group-members-field">
           <div className="group-members-label"><span>Add employees</span><small>{form.memberIds.length} selected</small></div>
