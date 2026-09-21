@@ -1379,6 +1379,11 @@ workspaceRouter.post("/support", async (req, res, next) => {
       LIMIT 1
     `;
 
+    await sql`
+      INSERT INTO support_requests (organization_id, requester_id, category, subject, message)
+      VALUES (${req.auth.organizationId}, ${req.auth.userId}, ${input.category}, ${input.subject}, ${input.message})
+    `;
+
     let administratorMessage = null;
     if (administrator) {
       const supportBody = [
@@ -1425,6 +1430,25 @@ workspaceRouter.post("/support", async (req, res, next) => {
     if (error?.name === "ZodError") return next(error);
     next(Object.assign(new Error("We could not send your support request. Please email support directly."), { status: 502, cause: error }));
   }
+});
+
+workspaceRouter.get("/support-requests", async (req, res, next) => {
+  try {
+    if (await currentRole(req.auth.userId) !== "senior_leader") {
+      return res.status(403).json({ error: "Only the administrator can view support requests" });
+    }
+    const requests = await sql`
+      SELECT request.id, request.category, request.subject, request.message, request.created_at,
+             employee.id AS requester_id, employee.full_name, employee.employee_id, employee.email,
+             employee.title, employee.department, employee.phone, employee.location
+      FROM support_requests request
+      JOIN users employee ON employee.id = request.requester_id
+      WHERE request.organization_id = ${req.auth.organizationId}
+      ORDER BY request.created_at DESC
+      LIMIT 100
+    `;
+    res.json({ requests });
+  } catch (error) { next(error); }
 });
 
 workspaceRouter.get("/push/config", (req, res) => {

@@ -356,9 +356,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
     } catch (error) { onToast(error.message); }
   }
 
-  async function chooseFile(event) {
-    const file = event.target.files?.[0];
-    event.target.value = "";
+  async function uploadAttachment(file) {
     if (!file) return;
     if (file.size > 8 * 1024 * 1024) return onToast("Files must be 8 MB or smaller");
     const form = new FormData();
@@ -370,6 +368,21 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
       onToast(`${file.name} is ready to send`);
     } catch (error) { onToast(error.message); }
     finally { setUploading(false); }
+  }
+
+  function chooseFile(event) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    void uploadAttachment(file);
+  }
+
+  function pasteImage(event) {
+    const item = [...(event.clipboardData?.items || [])].find((entry) => entry.type.startsWith("image/"));
+    const image = item?.getAsFile();
+    if (!image) return;
+    event.preventDefault();
+    const extension = image.type.split("/")[1] || "png";
+    void uploadAttachment(new File([image], `pasted-image-${Date.now()}.${extension}`, { type: image.type }));
   }
 
   function insertEmoji(emoji) {
@@ -533,6 +546,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             <div>
               {selectedPerson && <><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "audio")} title="Start voice call"><Phone size={18} /></button><button className="icon-button call-button" onClick={() => onStartCall(selectedPerson, "video")} title="Start video call"><Video size={18} /></button></>}
               {selected && <button className="members-button" onClick={() => canCreateGroup && setManageMembers(true)}><Users size={17} /> {channelMembers.length}</button>}
+              {selected && canCreateGroup && <button className="icon-button mobile-manage-members" onClick={() => setManageMembers(true)} title="Manage members" aria-label="Manage members"><UserPlus size={19} /></button>}
               <button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Bell size={19} /></button><button className={`icon-button ${selectedPerson ? "personal-chat-extra" : ""}`}><Info size={19} /></button>
             </div>
           </header>
@@ -587,7 +601,7 @@ export function Chat({ user, channels, people, directUnreadCounts = {}, onConver
             {editingMessage && <div className="composer-reply composer-edit"><Pencil size={16} /><div><b>Editing message</b><span>{editingMessage.body}</span></div><button type="button" onClick={() => { setEditingMessage(null); setMessage(""); }} aria-label="Cancel edit"><X size={16} /></button></div>}
             {replyingTo && <div className="composer-reply"><Reply size={16} /><div><b>Replying to {replyingTo.sender_name}</b><span>{replyingTo.body || replyingTo.file_name || "Attachment"}</span></div><button type="button" onClick={() => setReplyingTo(null)} aria-label="Cancel reply"><X size={16} /></button></div>}
             {attachment && <div className="composer-attachment"><span><Check size={15} /></span><div><b>{attachment.file_name}</b><small>{formatFileSize(attachment.file_size)} · Ready to send</small></div><button type="button" onClick={() => setAttachment(null)} title="Remove attachment"><X size={16} /></button></div>}
-            <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onKeyDown={(event) => {
+            <textarea ref={textareaRef} value={message} onChange={(event) => setMessage(event.target.value)} onPaste={pasteImage} onKeyDown={(event) => {
               if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form.requestSubmit(); }
             }} placeholder={selectedPerson ? `Message ${selectedPerson.full_name}` : `Message #${activeChannel?.name}`} rows={1} />
             <input ref={fileInputRef} className="composer-file-input" type="file" accept={ACCEPTED_FILES} onChange={chooseFile} />

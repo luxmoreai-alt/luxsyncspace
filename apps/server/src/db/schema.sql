@@ -110,6 +110,18 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_password_reset_one_pending
 CREATE INDEX IF NOT EXISTS idx_password_reset_org_status
   ON password_reset_requests(organization_id, status, requested_at DESC);
 
+CREATE TABLE IF NOT EXISTS support_requests (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+  requester_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  category TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  message TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_support_requests_org_created
+  ON support_requests(organization_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS announcements (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

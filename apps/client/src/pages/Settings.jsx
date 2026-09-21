@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
+import { Badge, Bell, BookOpen, Building2, CalendarDays, Download, KeyRound, LifeBuoy, Mail, MapPin, MoreVertical, Pencil, Phone, PlusSquare, RefreshCw, Save, Search, Send, Share2, ShieldCheck, Smartphone, UserRound, Users, UserX, Volume2 } from "lucide-react";
 import { api } from "../lib/api";
 import { disableNotifications, enableNotifications, notificationsEnabled, notificationsSupported, playNotificationSound } from "../lib/notifications";
 import { Avatar } from "../components/Avatar";
@@ -40,6 +40,8 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
   const [pendingReset, setPendingReset] = useState(null);
   const [resetRequests, setResetRequests] = useState([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
+  const [supportRequests, setSupportRequests] = useState([]);
+  const [supportLoading, setSupportLoading] = useState(false);
   const [query, setQuery] = useState("");
   const [invite, setInvite] = useState(emptyInvite);
   const [busy, setBusy] = useState(false);
@@ -78,6 +80,11 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     loadResetRequests();
   }, [tab, isAdministrator]);
 
+  useEffect(() => {
+    if (tab !== "support" || !isAdministrator) return;
+    loadSupportRequests();
+  }, [tab, isAdministrator]);
+
   async function loadResetRequests() {
     setRequestsLoading(true);
     try {
@@ -85,6 +92,15 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
       setResetRequests(result.requests || []);
     } catch (error) { onToast(error.message); }
     finally { setRequestsLoading(false); }
+  }
+
+  async function loadSupportRequests() {
+    setSupportLoading(true);
+    try {
+      const result = await api("/support-requests");
+      setSupportRequests(result.requests || []);
+    } catch (error) { onToast(error.message); }
+    finally { setSupportLoading(false); }
   }
 
   async function resetEmployeePassword() {
@@ -225,6 +241,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           <button className={tab === "employees" ? "active" : ""} onClick={() => setTab("employees")}><Users size={18} /> Employee profiles</button>
           {canInvite && <button className={tab === "invite" ? "active" : ""} onClick={() => setTab("invite")}><Send size={18} /> Invite employees</button>}
           {isAdministrator && <button className={tab === "password-resets" ? "active" : ""} onClick={() => setTab("password-resets")}><KeyRound size={18} /> Password resets</button>}
+          {isAdministrator && <button className={tab === "support" ? "active" : ""} onClick={() => setTab("support")}><LifeBuoy size={18} /> Support requests</button>}
           <button className={tab === "app" ? "active" : ""} onClick={() => setTab("app")}><Smartphone size={18} /> App & notifications</button>
         </aside>
         <section className="settings-content panel">
@@ -240,20 +257,12 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
           {tab === "employees" && <>
             <header className="settings-section-head"><div><h2>Employee profiles</h2><p>View company identity, designation, team, and contact details.</p></div></header>
             <label className="section-search settings-search"><Search size={17} /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by employee ID, name, or designation" /></label>
-            <div className="employee-table">
-              {filtered.map((person) => <div className="employee-row" key={person.id}>
-                <button className="employee-row-profile" onClick={() => setSelected(person)} aria-label={`View ${person.full_name}'s profile`}>
-                  <Avatar person={person} />
-                  <span><b>{person.full_name}</b><small>{person.employee_id}</small></span>
-                  <span className="employee-role-details"><b>{person.title}</b><small>{person.department}</small></span>
-                  <span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span>
-                </button>
-                {(canEditEmployee(person) || canDeleteEmployee(person)) && <div className="employee-row-actions">
-                  {isAdministrator && person.id !== user.id && canEditEmployee(person) && <button className="employee-row-reset" onClick={() => setPendingReset(person)} aria-label={`Reset ${person.full_name}'s password`}><KeyRound size={13} /> Reset password</button>}
-                  {canEditEmployee(person) && <button className="employee-row-edit" onClick={() => { setSelected(person); startEditing(person); }} aria-label={`Edit ${person.full_name}`}><Pencil size={13} /> Edit</button>}
-                  {canDeleteEmployee(person) && <button className="employee-row-delete" onClick={() => setPendingDelete(person)} aria-label={`Delete ${person.full_name}`}><UserX size={13} /> Delete</button>}
-                </div>}
-              </div>)}
+            <div className="employee-profile-cards">
+              {filtered.map((person) => <article className="employee-profile-card" key={person.id}>
+                <div className="employee-card-head"><Avatar person={person} showPresence /><div><h3>{person.full_name}</h3><p>{person.employee_id || "Employee ID pending"}</p><small>{person.title} · {person.department}</small></div><span className={`role-chip role-${person.role}`}>{person.role.replace("_", " ")}</span></div>
+                {(!person.phone || !person.location) && <div className="profile-missing-fields">{!person.phone && <span><Phone size={13} /> Phone not provided</span>}{!person.location && <span><MapPin size={13} /> Work location not provided</span>}</div>}
+                <div className="employee-card-actions"><button className="button button-secondary" onClick={() => setSelected(person)}><Search size={15} /> View details</button>{canEditEmployee(person) && <button className="button button-primary" onClick={() => { setSelected(person); startEditing(person); }}><Pencil size={15} /> Edit</button>}</div>
+              </article>)}
             </div>
           </>}
           {tab === "invite" && canInvite && <>
@@ -280,6 +289,17 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
                 <div><h3>{request.full_name}</h3><p>{request.employee_id} · {request.email}</p><small>Requested {new Date(request.requested_at).toLocaleString()}</small></div>
                 <span className={`reset-status reset-status-${request.status}`}>{request.status}</span>
                 {request.status === "pending" ? <button className="button button-primary" onClick={() => setPendingReset(request)}>Reset & email</button> : <small className="reset-completed-at">Completed {new Date(request.completed_at).toLocaleString()}</small>}
+              </section>)}
+            </div>
+          </>}
+          {tab === "support" && isAdministrator && <>
+            <header className="settings-section-head reset-section-head"><div><h2>Support requests</h2><p>Employee requests submitted through the Help Center.</p></div><button className="button button-secondary" onClick={loadSupportRequests} disabled={supportLoading}><RefreshCw size={15} /> Refresh</button></header>
+            <div className="support-request-list">
+              {supportLoading && !supportRequests.length && <div className="reset-list-empty">Loading support requests…</div>}
+              {!supportLoading && !supportRequests.length && <div className="reset-list-empty"><LifeBuoy size={25} /><b>No support requests</b><p>New employee requests will appear here.</p></div>}
+              {supportRequests.map((request) => <section className="support-request-row" key={request.id}>
+                <div className="reset-request-icon"><LifeBuoy size={18} /></div>
+                <div><h3>{request.subject}</h3><p><b>{request.category}</b> · {request.full_name} ({request.employee_id || "No ID"})</p><small>{request.title} · {request.department} · {request.email}</small><p className="support-request-message">{request.message}</p><small>Submitted {new Date(request.created_at).toLocaleString()}</small></div>
               </section>)}
             </div>
           </>}
