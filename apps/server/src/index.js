@@ -13,6 +13,7 @@ import jwt from "jsonwebtoken";
 import { config } from "./config.js";
 import { authRouter } from "./routes/auth.js";
 import { workspaceRouter } from "./routes/workspace.js";
+import { provisioningRouter } from "./routes/provisioning.js";
 import { startEventReminderScheduler } from "./services/eventReminders.js";
 import { sql } from "./db/client.js";
 import { cached } from "./services/cache.js";
@@ -55,6 +56,7 @@ app.get("/api/health", (_req, res) => res.json({
   service: "luxsyncspace-api",
   realtime: config.redisUrl ? "redis-coordinated" : "single-instance"
 }));
+app.use("/api/provisioning", provisioningRouter);
 app.use("/api/auth", authRouter);
 app.use("/api", workspaceRouter);
 

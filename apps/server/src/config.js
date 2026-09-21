@@ -58,6 +58,10 @@ export const config = {
   },
   adminEmail: process.env.ADMIN_EMAIL,
   adminPassword: process.env.ADMIN_PASSWORD,
+  provisioning: {
+    token: process.env.HRMS_PROVISIONING_TOKEN || "",
+    organizationId: process.env.HRMS_PROVISIONING_ORGANIZATION_ID || "",
+  },
   vapid: {
     publicKey: process.env.VAPID_PUBLIC_KEY,
     privateKey: process.env.VAPID_PRIVATE_KEY,
