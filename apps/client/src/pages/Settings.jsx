@@ -107,7 +107,7 @@ export function Settings({ user, people, onToast, onRefresh, onUserUpdate, onSta
     if (!pendingReset) return;
     setBusy(true);
     try {
-      const result = await api(`/employees/${pendingReset.id || pendingReset.user_id}/password-reset`, { method: "POST" });
+      const result = await api(`/employees/${pendingReset.user_id}/password-reset`, { method: "POST" });
       setPendingReset(null);
       await loadResetRequests();
       onToast(result.message);
